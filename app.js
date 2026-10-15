@@ -1,0 +1,1732 @@
+(function () {
+  "use strict";
+
+  var STORAGE_KEY = "lilly360-v2";
+
+  var FLOWS = {
+    1: { nome: "Da busca ao paciente", meta: 5, inicio: "#/inicio" },
+    3: { nome: "Da live perdida ao replay", meta: 0, inicio: "#/congressos" },
+    4: { nome: "Do congresso à consulta", meta: 2, inicio: "#/qr", oculto: true },
+    5: { nome: "Do estudo ao reconhecimento", meta: 3, inicio: "#/trilha/cardio-fundamentos" }
+  };
+
+  var ROUTES = {
+    inicio: { titulo: "Início", release: "R1", dado: "Itens abertos e ignorados na seleção da semana", nav: "inicio" },
+    busca: { titulo: "Busca", release: "R1", dado: "Termos buscados, sem dado pessoal", nav: "busca" },
+    tema: { titulo: "Página educacional e triagem", release: "R1", dado: "Situação escolhida na triagem (momento do paciente) e material enviado", nav: "busca" },
+    licao: { titulo: "Micro-lição e quiz", release: "R1", dado: "Tempo assistido e respostas por tema", nav: "aprendizado" },
+    caso: { titulo: "Caso clínico ramificado", release: "R2", dado: "Cada decisão do médico", nav: "aprendizado" },
+    congressos: { titulo: "Congressos e ao vivo", release: "R1", dado: "Inscrição, lembrete e presença", nav: "congressos" },
+    live: { titulo: "Página da live", release: "R1", dado: "Inscrição e horário do lembrete", nav: "congressos" },
+    replay: { titulo: "Replay em 3 lições", release: "R1", dado: "Lições do replay assistidas", nav: "congressos" },
+    qr: { titulo: "QR autenticado no evento", release: "R2", dado: "Leitura do QR e login", nav: "" },
+    evento: { titulo: "Conteúdo do evento", release: "R2", dado: "Itens do evento abertos", nav: "congressos" },
+    radar: { titulo: "Radar da semana", release: "R1 (segmentado no R2)", dado: "Temas do Radar abertos", nav: "radar" },
+    trilha: { titulo: "Trilha", release: "R1", dado: "Progresso e quiz final", nav: "aprendizado" },
+    conclusao: { titulo: "Conclusão, certificado e selo", release: "R2", dado: "Certificado baixado e selo exportado", nav: "aprendizado" },
+    social: { titulo: "Social Content Lab", release: "R2", dado: "Peça publicada e canal", nav: "voce" },
+    voce: { titulo: "Você: progresso e selos", release: "R1 (certificados no R2)", dado: "Selos exportados e preferências", nav: "voce" },
+    aprendizado: { titulo: "Aprendizado", release: "R1", dado: "Trilha aberta", nav: "aprendizado" },
+    pacientes: { titulo: "Kit: ferramentas e materiais", release: "R1", dado: "Ferramenta usada e material enviado", nav: "pacientes" },
+    protocolos: { titulo: "Acervo", release: "R1", dado: "Página e profundidade de leitura", nav: "protocolos" },
+    parceiros: { titulo: "Parceiros", release: "Evolução na F4", dado: "Cliques em conteúdo patrocinado", nav: "" },
+    equipe: { titulo: "Falar com a equipe", release: "R3", dado: "Pedidos de contato", nav: "" }
+  };
+
+  function initialState() {
+    return {
+      flow: 0,
+      day: "seg",
+      touches: 0,
+      counting: false,
+      goal: null,
+      goalSecs: null,
+      t0: Date.now(),
+      signals: [],
+      query: "",
+      triage: null,
+      sent: false,
+      lessonPlayed: false,
+      quiz: { licao: { i: 0, answers: [] }, final: { i: 0, answers: [] } },
+      lessonDone: false,
+      quizWrong: false,
+      caseStep: 0,
+      caseChoice: null,
+      caseAnswers: [],
+      caseDone: false,
+      liveSignup: false,
+      liveReminder: null,
+      liveMissed: false,
+      nextLiveSignup: false,
+      replaySeen: [],
+      qrStep: 0,
+      eventAttended: false,
+      radarSeen: false,
+      trailDone: false,
+      postFormat: "post",
+      postText: null,
+      posted: false,
+      sheet: null,
+      backstage: false,
+      why: null,
+      audio: false,
+      savedKit: false,
+      contacts: []
+    };
+  }
+
+  var state = load();
+  var lastRoute = null;
+  var lastTouches = null;
+  var sheetTimer = null;
+  var backstageTimer = null;
+  var revealObserver = null;
+
+  function load() {
+    try {
+      var raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        var saved = Object.assign(initialState(), JSON.parse(raw));
+        if (!FLOWS[saved.flow] || FLOWS[saved.flow].oculto) saved.flow = 0;
+        return saved;
+      }
+    } catch (e) {}
+    return initialState();
+  }
+
+  function save() {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {}
+  }
+
+  /* ---------- Utilidades ---------- */
+
+  function $(sel, ctx) {
+    return (ctx || document).querySelector(sel);
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function icon(name, size, extra) {
+    size = size || 20;
+    return '<svg width="' + size + '" height="' + size + '" fill="none" stroke="currentColor" stroke-width="' + (extra || 1.75) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-' + name + '" /></svg>';
+  }
+
+  function num(n) {
+    return String(n).replace(".", ",");
+  }
+
+  function normalize(s) {
+    return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function sig(nome, props, efeito) {
+    state.signals.unshift({ nome: nome, props: props || null, efeito: efeito || null, dia: state.day });
+    if (state.signals.length > 40) state.signals.length = 40;
+  }
+
+  function toast(msg) {
+    var root = $("#toast-root");
+    var el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = msg;
+    root.appendChild(el);
+    setTimeout(function () {
+      el.classList.add("is-leaving");
+      setTimeout(function () {
+        el.remove();
+      }, 160);
+    }, 2640);
+  }
+
+  function parseRoute() {
+    var parts = location.hash.replace(/^#\/?/, "").split("/");
+    var name = parts[0] || "inicio";
+    if (!ROUTES[name]) name = "inicio";
+    return { name: name, param: parts[1] || "" };
+  }
+
+  function go(hash) {
+    if (location.hash === hash) render();
+    else location.hash = hash;
+  }
+
+  function reachGoal() {
+    if (state.goal === null && state.counting) {
+      state.goal = state.touches;
+      state.goalSecs = Math.max(1, Math.round((Date.now() - state.t0) / 1000));
+    }
+  }
+
+  /* ---------- Conteúdo ---------- */
+
+  var DIAS = { seg: "Segunda-feira, 5 de outubro", ter: "Terça-feira, 6 de outubro" };
+
+  var TRIAGE = {
+    tratamento: {
+      label: "Em tratamento",
+      detail: "Já usa IECA e a creatinina subiu depois do ajuste",
+      momento: "em_tratamento",
+      material: "Seu remédio do coração e os exames de rim",
+      n: 312
+    },
+    novo: {
+      label: "Novo diagnóstico",
+      detail: "Insuficiência cardíaca recém-diagnosticada, com doença renal",
+      momento: "novo_diagnostico",
+      material: "Insuficiência cardíaca: o que muda a partir de agora",
+      n: 188
+    },
+    efeito: {
+      label: "Efeito colateral",
+      detail: "Tosse, tontura ou potássio alto depois de iniciar o remédio",
+      momento: "efeito_colateral",
+      material: "Tosse, tontura e potássio: quando avisar o médico",
+      n: 146
+    }
+  };
+
+  var ACERVO = [
+    { t: "Ajuste de dose de IECA quando a creatinina sobe", tipo: "Página educacional, ferramenta e material para o paciente", kw: "ajuste dose creatinina ieca enalapril rim renal titulacao", href: "#/tema/ajuste-de-dose" },
+    { t: "TFG CKD-EPI 2021", tipo: "Calculadora", kw: "tfg rim renal creatinina ckd filtracao", href: "#/tema/ajuste-de-dose" },
+    { t: "Rim e coração no mesmo paciente", tipo: "Caso clínico", kw: "rim coracao caso dose drc", href: "#/caso/rim-coracao" },
+    { t: "Tremor e betabloqueador: o que investigar", tipo: "Estudo no acervo", kw: "tremor betabloqueador", href: "#/protocolos" },
+    { t: "Potássio alto com antagonista mineralocorticoide", tipo: "Material para o paciente", kw: "potassio espironolactona hipercalemia", href: "#/pacientes" },
+    { t: "iSGLT2 na doença renal crônica", tipo: "Estudo no acervo", kw: "isglt2 sglt2 drc rim dapagliflozina empagliflozina", href: "#/protocolos" }
+  ];
+
+  var SUGESTOES = ["Ajuste de dose com creatinina alta", "Tremor com betabloqueador", "Potássio alto com espironolactona", "iSGLT2 na DRC"];
+
+  var QUIZ = {
+    licao: [
+      {
+        tema: "ajuste_de_dose",
+        q: "Após aumentar a dose do IECA num paciente com ICFEr e DRC, a creatinina sobe 20% em relação ao basal, com potássio normal. Qual a conduta?",
+        o: ["Suspender o IECA imediatamente", "Manter a dose e repetir creatinina e potássio em 1 a 2 semanas", "Dobrar a dose para compensar"],
+        a: 1,
+        f: "Uma alta de até 30% da creatinina nas primeiras semanas é esperada com IECA ou BRA e, em geral, não exige suspender. O controle de creatinina e potássio em 1 a 2 semanas orienta o próximo passo.",
+        r: "KDIGO 2024 Clinical Practice Guideline for the Evaluation and Management of CKD."
+      },
+      {
+        tema: "pilares_icfer",
+        q: "Quais são os quatro pilares do tratamento farmacológico da ICFEr?",
+        o: ["IECA, BRA ou sacubitril-valsartana; betabloqueador; antagonista mineralocorticoide; iSGLT2", "Diurético de alça, digoxina, amiodarona e nitrato", "BRA, bloqueador de canal de cálcio, estatina e AAS"],
+        a: 0,
+        f: "As quatro classes reduzem mortalidade e hospitalização na ICFEr e devem ser iniciadas e tituladas em etapas.",
+        r: "ESC 2021 Guidelines for heart failure e atualização de 2023."
+      }
+    ],
+    final: [
+      {
+        tema: "albuminuria",
+        q: "Qual exame identifica dano renal mesmo com TFG preservada?",
+        o: ["Albuminúria (relação albumina/creatinina)", "Ureia isolada", "Ácido úrico"],
+        a: 0,
+        f: "Albuminúria de 30 mg/g ou mais indica dano renal e aumenta o risco cardiovascular, mesmo com TFG normal.",
+        r: "KDIGO 2024 Clinical Practice Guideline for CKD."
+      },
+      {
+        tema: "isglt2_ic",
+        q: "Na ICFEr, qual classe reduz hospitalização por insuficiência cardíaca com ou sem diabetes?",
+        o: ["Sulfonilureia", "iSGLT2", "Bloqueador de canal de cálcio não di-hidropiridínico"],
+        a: 1,
+        f: "Os iSGLT2 reduzem hospitalização e morte cardiovascular na ICFEr, independentemente de diabetes.",
+        r: "ESC 2021 Guidelines for heart failure."
+      }
+    ]
+  };
+
+  var CASO = [
+    {
+      etapa: "Apresentação",
+      h: "Sr. Paulo, 54 anos, diabetes tipo 2, ICFEr (FE 30%) e DRC estágio 3b (TFG 37). Em uso de enalapril, que você aumentou há 10 dias. A creatinina foi de 1,8 para 2,1 mg/dL (+17%); potássio 5,0 mmol/L.",
+      q: "O que você decide?",
+      o: ["Manter a dose e reavaliar creatinina e potássio em 1 a 2 semanas", "Suspender o enalapril", "Trocar por hidralazina e nitrato agora"],
+      a: 0,
+      f: "Uma alta abaixo de 30% é esperada. Suspender tira um pilar que reduz mortalidade; a troca fica para intolerância real.",
+      r: "KDIGO 2024; ESC 2021."
+    },
+    {
+      etapa: "Duas semanas depois",
+      h: "Creatinina 2,0 mg/dL, potássio 5,1 mmol/L. Classe funcional NYHA II. Ainda sem iSGLT2.",
+      q: "Qual o próximo passo?",
+      o: ["Adiar o iSGLT2 até a TFG melhorar", "Iniciar iSGLT2, indicado com TFG a partir de 20 a 25", "Associar anti-inflamatório para a dor nas costas"],
+      a: 1,
+      f: "O iSGLT2 protege o rim e o coração e pode ser iniciado com TFG baixa. Anti-inflamatório piora a função renal e a retenção de sódio.",
+      r: "KDIGO 2024; ESC 2023 focused update."
+    },
+    {
+      etapa: "Conversa com o paciente",
+      h: "Sr. Paulo pergunta se o rim está piorando por causa dos remédios.",
+      q: "Como você responde?",
+      o: ["Diz que o rim está piorando e que vai suspender os remédios", "Não comenta o exame para não preocupar", "Explica que a pequena alta é esperada, que os remédios protegem o rim e combina os exames de controle"],
+      a: 2,
+      f: "Explicar o motivo da alta e o plano de controle melhora a adesão, que é o que protege o rim a longo prazo.",
+      r: "Diretriz Brasileira de Insuficiência Cardíaca."
+    }
+  ];
+
+  var REPLAY = [
+    { t: "Visão geral", d: 8 },
+    { t: "Casos práticos", d: 10 },
+    { t: "Diretrizes", d: 6 }
+  ];
+
+  var SELOS = [
+    { id: "aprendiz", n: "Aprendiz Ativo", d: "20 atividades concluídas", earned: function () { return state.trailDone; } },
+    { id: "especialista", n: "Especialista em Cardiologia", d: "Trilha Cardiologia - Fundamentos", earned: function () { return state.trailDone; } },
+    { id: "olhar", n: "Olhar clínico", d: "10 casos clínicos resolvidos", earned: function () { return true; } },
+    { id: "sequencia", n: "Semana completa", d: "Uma ação em sete dias", earned: function () { return true; } },
+    { id: "aovivo", n: "Presença ao vivo", d: "Participou de uma live", earned: function () { return state.replaySeen.length === 3; } },
+    { id: "evento", n: "No congresso", d: "Conteúdo do evento pelo QR", earned: function () { return state.eventAttended; } }
+  ];
+
+  function progress() {
+    var horas = 18.4 + (state.lessonDone ? 0.3 : 0) + state.replaySeen.length * 0.4 + (state.caseDone ? 0.4 : 0) + (state.trailDone ? 0.9 : 0);
+    horas = Math.min(20, Math.round(horas * 10) / 10);
+    return {
+      licoes: 47 + (state.lessonDone ? 1 : 0) + state.replaySeen.length + (state.trailDone ? 1 : 0),
+      horas: horas,
+      casos: 12 + (state.caseDone ? 1 : 0),
+      dias: 12 + (state.day === "ter" ? 1 : 0),
+      ranking: 284 - (state.trailDone ? 2 : 0),
+      recert: Math.round((horas / 20) * 100),
+      faltam: Math.round((20 - horas) * 10) / 10
+    };
+  }
+
+  /* ---------- Seleção da semana (regras do R1) ---------- */
+
+  function selection() {
+    var ter = state.day === "ter";
+    var items = [];
+    var casoSobe = state.quizWrong && ter;
+    items.push({ id: "caso", score: casoSobe ? 0.86 : 0.57 });
+    if (state.liveMissed && ter) items.push({ id: "replay", score: 0.9 });
+    if (state.eventAttended && ter) items.push({ id: "evento", score: 0.88 });
+    else items.push({ id: "audio", score: 0.64 });
+    items.push({ id: "calc", score: state.sent ? 0.78 : 0.6 });
+    return items.sort(function (a, b) {
+      return b.score - a.score;
+    });
+  }
+
+  var WHY = {
+    caso: function () {
+      var sobe = state.quizWrong && state.day === "ter";
+      return {
+        titulo: "Caso clínico: Rim e coração no mesmo paciente",
+        motivo: sobe ? "Porque você teve dúvida sobre ajuste de dose no quiz de segunda" : "Porque você está na trilha Cardiologia Avançada",
+        regra: sobe ? "Se o médico erra uma pergunta do tema, o caso do tema entra no topo da seleção da semana seguinte" : "Casos da trilha em andamento entram na seleção",
+        sinais: sobe ? ["quiz_respondido {tema: ajuste_de_dose, acerto: false}"] : ["trilha_em_andamento {trilha: cardiologia_avancada}"],
+        fonte: sobe ? "Comportamento no Lilly360 (quiz)" : "Comportamento no Lilly360 (trilha)",
+        consentimento: "Uso do comportamento para personalizar (aviso de privacidade)"
+      };
+    },
+    replay: function () {
+      return {
+        titulo: "Replay decomposto: Atualização em Cardiologia 2026",
+        motivo: "Porque você se inscreveu na live de segunda e não conseguiu assistir",
+        regra: "Inscrição sem presença gera o replay em 3 lições no dia seguinte",
+        sinais: ["live_inscricao {evento: cardio_2026}", "live_presenca {presente: false}"],
+        fonte: "Plataforma de lives",
+        consentimento: "Inscrição no evento"
+      };
+    },
+    evento: function () {
+      return {
+        titulo: "Conteúdo do congresso: o que muda para o seu paciente",
+        motivo: "Porque você participou do congresso ontem",
+        regra: "Leitura do QR no estande põe o conteúdo do evento na seleção e no Radar do dia seguinte",
+        sinais: ["qr_lido {evento: congresso_cardio_2026}", "login {metodo: crm}"],
+        fonte: "QR do evento e login",
+        consentimento: "Login autenticado e uso do comportamento para personalizar"
+      };
+    },
+    audio: function () {
+      return {
+        titulo: "Atualização em áudio: congresso em 14 dias",
+        motivo: "Está no Radar desta semana: o congresso de cardiologia é em 14 dias",
+        regra: "Itens do Radar da especialidade entram na seleção; formato áudio porque você ouviu 3 áudios no mês",
+        sinais: ["radar_semana {especialidade: cardiologia}", "audio_play {mes: 3}"],
+        fonte: "Contexto editorial (Radar) e comportamento",
+        consentimento: "Uso do comportamento para personalizar"
+      };
+    },
+    calc: function () {
+      return {
+        titulo: "Calculadoras rápidas",
+        motivo: state.sent ? "Porque você enviou material de ajuste de dose a um paciente" : "Porque você usou a TFG CKD-EPI 3 vezes este mês",
+        regra: "Ferramentas sobem conforme o uso e o momento do paciente escolhido na triagem",
+        sinais: state.sent ? ["triagem_respondida {momento: " + TRIAGE[state.triage].momento + "}", "material_enviado {canal: whatsapp}"] : ["ferramenta_usada {tfg_ckd_epi: 3}"],
+        fonte: "Comportamento no Lilly360 e triagem",
+        consentimento: "Uso do comportamento para personalizar"
+      };
+    }
+  };
+
+  /* ---------- Componentes ---------- */
+
+  var MEDIA = {
+    ecg: '<svg width="200" height="110" viewBox="0 0 200 110" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M0 62h52l10-22 14 46 16-70 14 58 9-12h85" /><circle cx="92" cy="16" r="5" fill="#d31710" stroke="none" /></svg>',
+    wave: '<svg width="200" height="80" viewBox="0 0 200 80" fill="currentColor"><rect x="4" y="34" width="6" height="12" rx="3" /><rect x="18" y="24" width="6" height="32" rx="3" /><rect x="32" y="12" width="6" height="56" rx="3" /><rect x="46" y="28" width="6" height="24" rx="3" /><rect x="60" y="18" width="6" height="44" rx="3" /><rect x="74" y="4" width="6" height="72" rx="3" fill="#d31710" /><rect x="88" y="22" width="6" height="36" rx="3" /><rect x="102" y="30" width="6" height="20" rx="3" /><rect x="116" y="14" width="6" height="52" rx="3" /><rect x="130" y="26" width="6" height="28" rx="3" /><rect x="144" y="20" width="6" height="40" rx="3" /><rect x="158" y="32" width="6" height="16" rx="3" /><rect x="172" y="24" width="6" height="32" rx="3" /><rect x="186" y="36" width="6" height="8" rx="3" /></svg>',
+    tools: '<svg width="200" height="100" viewBox="0 0 200 100" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 20h40M40 0v40" transform="translate(10 30)" /><path d="M80 50h40" /><path d="M150 35l30 30M180 35l-30 30" /><circle cx="100" cy="35" r="3" fill="#d31710" stroke="none" /><circle cx="100" cy="65" r="3" fill="#d31710" stroke="none" /></svg>',
+    replay: '<svg width="200" height="90" viewBox="0 0 200 90" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"><rect x="6" y="20" width="56" height="50" rx="10" /><rect x="72" y="20" width="56" height="50" rx="10" /><rect x="138" y="20" width="56" height="50" rx="10" /><path d="M28 36v18l14-9z" fill="#d31710" stroke="none" /><path d="M94 36v18l14-9z" fill="currentColor" stroke="none" /><path d="M160 36v18l14-9z" fill="currentColor" stroke="none" /></svg>',
+    slides: '<svg width="200" height="110" viewBox="0 0 200 110" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="30" y="14" width="140" height="80" rx="10" /><path d="M50 74l26-26 18 16 22-30 34 40" /><circle cx="64" cy="36" r="6" fill="#d31710" stroke="none" /></svg>',
+    qr: '<svg width="200" height="110" viewBox="0 0 200 110" fill="currentColor"><rect x="60" y="10" width="26" height="26" rx="4" /><rect x="114" y="10" width="26" height="26" rx="4" /><rect x="60" y="64" width="26" height="26" rx="4" /><rect x="96" y="46" width="8" height="8" /><rect x="114" y="64" width="8" height="8" /><rect x="132" y="82" width="8" height="8" fill="#d31710" /><rect x="96" y="82" width="8" height="8" /><rect x="132" y="64" width="8" height="8" /></svg>'
+  };
+
+  function moveIndicator(link, instant) {
+    var bar = $(".nav-indicator");
+    if (!bar) return;
+    var target = link || $('.nav-link[aria-current="page"]');
+    if (!target || !target.offsetWidth) {
+      bar.classList.remove("is-on");
+      return;
+    }
+    var jump = instant || !bar.classList.contains("is-on");
+    bar.classList.toggle("is-instant", jump);
+    bar.style.width = target.offsetWidth + "px";
+    bar.style.transform = "translateX(" + target.offsetLeft + "px)";
+    bar.classList.add("is-on");
+    if (jump) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { bar.classList.remove("is-instant"); });
+      });
+    }
+  }
+
+  function cardHtml(item) {
+    var seen = state.replaySeen.length;
+    var c = {
+      caso: {
+        media: "ecg", tone: "rose", tag: "3 ECGs",
+       
+        title: "Rim e coração no mesmo paciente",
+        body: "ICFEr e DRC estágio 3b: como titular o IECA com creatinina elevada?",
+        cta: '<a class="cta-link" href="#/caso/rim-coracao">' + (state.caseDone ? "Rever caso" : "Abrir caso") + "</a>"
+      },
+      replay: {
+        media: "replay", tone: "ink", tag: "Você perdeu", flag: true,
+       
+        title: "Atualização em Cardiologia 2026",
+        body: seen === 0 ? "A live de segunda em lições de 8, 10 e 6 minutos." : seen + " de 3 lições assistidas.",
+        cta: '<a class="cta-link" href="#/replay/cardio-2026">' + (seen === 0 ? "Iniciar replay" : seen < 3 ? "Continuar replay" : "Rever replay") + "</a>"
+      },
+      evento: {
+        media: "slides", tone: "rose", tag: "Congresso", flag: true,
+       
+        title: "O que muda para o seu paciente",
+        body: "Slides do estande, o material da Dra. Helena Prado e 3 perguntas para o consultório.",
+        cta: '<a class="cta-link" href="#/evento/cardio-2026">Ver conteúdo</a>'
+      },
+      audio: {
+        media: "wave", tone: "ink", tag: "2 min",
+       
+        title: "Congresso em 14 dias: o que observar",
+        body: "Os estudos mais esperados e as novas diretrizes de fibrilação atrial.",
+        cta: '<button class="cta-link" type="button" data-action="ouvir-atualizacao">' + (state.audio ? "Ouvindo agora" : "Ouvir atualização") + "</button>"
+      },
+      calc: {
+        media: "tools", tone: "cream", tag: "3 ferramentas",
+       
+        title: "Calculadoras rápidas",
+        body: "TFG CKD-EPI 2021, titulação de dose e risco cardiovascular.",
+        cta: '<a class="cta-link" href="#/tema/ajuste-de-dose">Calcular a TFG</a>'
+      }
+    }[item.id];
+    return '<article class="card' + (c.flag ? " card-flag" : "") + '">' +
+      '<div class="card-media media-' + c.tone + '" aria-hidden="true">' + MEDIA[c.media] + '<span class="card-media-tag">' + c.tag + "</span></div>" +
+      '<h3 class="card-title">' + c.title + "</h3>" +
+      '<p class="card-body">' + c.body + "</p>" +
+      '<p class="card-why">' + esc(WHY[item.id]().motivo) + "</p>" +
+      '<div class="card-foot">' + c.cta + "</div></article>";
+  }
+
+  function page(opts, body) {
+    return '<section class="page' + (opts.narrow ? " page-narrow" : "") + '"><div class="container">' +
+      (opts.back !== false ? '<a class="back-link" href="' + (opts.back || "#/inicio") + '">' + icon("back", 18, 2) + (opts.backLabel || "Início") + "</a>" : "") +
+      (opts.eyebrow ? '<p class="eyebrow page-eyebrow">' + opts.eyebrow + "</p>" : "") +
+      '<div class="page-head' + (opts.intro ? " has-intro" : "") + '">' +
+      '<h1 class="display page-title" tabindex="-1" data-focus>' + opts.title + "</h1>" +
+      (opts.intro ? '<p class="page-intro">' + opts.intro + "</p>" : "") + "</div>" +
+      body + "</div></section>";
+  }
+
+  function quizHtml(key) {
+    var qs = QUIZ[key];
+    var st = state.quiz[key];
+    if (st.i >= qs.length) return "";
+    var it = qs[st.i];
+    var ans = st.answers[st.i];
+    var html = '<div class="quiz"><div class="steps" aria-hidden="true">' + qs.map(function (_, i) {
+      return '<span class="' + (i <= st.i ? "is-on" : "") + '"></span>';
+    }).join("") + "</div>" +
+      '<p class="eyebrow">Pergunta ' + (st.i + 1) + " de " + qs.length + "</p>" +
+      '<h3 class="quiz-q">' + it.q + "</h3>" +
+      '<div class="options">' + it.o.map(function (o, i) {
+        var cls = "";
+        if (ans) {
+          if (i === it.a) cls = " is-right";
+          else if (i === ans.choice) cls = " is-wrong";
+        }
+        return '<button class="option' + cls + '" type="button" data-action="quiz-answer" data-quiz="' + key + '" data-i="' + i + '"' + (ans ? " disabled" : "") + ">" + o + "</button>";
+      }).join("") + "</div>";
+    if (ans) {
+      html += '<div class="feedback' + (ans.ok ? "" : " is-bad") + '"><b>' + (ans.ok ? "Isso." : "Quase.") + "</b> " + it.f + "<cite>Referência: " + it.r + "</cite></div>" +
+        '<button class="button button-primary" type="button" data-action="quiz-next" data-quiz="' + key + '">' + (st.i < qs.length - 1 ? "Próxima pergunta" : "Concluir") + "</button>";
+    }
+    return html + "</div>";
+  }
+
+  /* ---------- Telas ---------- */
+
+  var VIEWS = {};
+
+  VIEWS.inicio = function () {
+    var p = progress();
+    var ring = 2 * Math.PI * 28;
+    var lesson = state.lessonDone
+      ? { ctx: "Cardiologia Avançada, lição 7 de 8", titulo: "Faltam 18 minutos.", nome: "Manejo de arritmias", valor: 0, meta: "0 de 18 min", pct: "0%", href: "#/licao/arritmias", prox: "Prevenção de morte <em>súbita</em>", proxMeta: "Lição 8 de 8, cerca de 15 min" }
+      : { ctx: "Cardiologia Avançada, lição 6 de 8", titulo: "Faltam 4 minutos.", nome: "Insuficiência cardíaca com fração de ejeção reduzida", valor: 0.75, meta: "12 de 16 min", pct: "75%", href: "#/licao/ic-fer", prox: "Manejo de <em>arritmias</em>", proxMeta: "Lição 7 de 8, cerca de 18 min" };
+    var radarCustom = state.eventAttended && state.day === "ter";
+
+    return '<section class="greeting" aria-labelledby="saudacao"><div class="container"><div>' +
+      '<p class="eyebrow">' + DIAS[state.day] + "</p>" +
+      '<h1 class="display greeting-title" id="saudacao" tabindex="-1" data-focus>Bom dia, <em>Dr. Paulo</em>.</h1></div>' +
+      '<a class="recert" href="#/voce" aria-label="Recertificação ' + p.recert + "% concluída. Faltam " + num(p.faltam) + ' horas até 31 de março de 2027">' +
+      '<span class="ring" aria-hidden="true"><svg width="64" height="64" viewBox="0 0 64 64"><circle class="ring-track" cx="32" cy="32" r="28" fill="none" stroke-width="5" /><circle class="ring-value" cx="32" cy="32" r="28" fill="none" stroke-width="5" stroke-dasharray="' + ((ring * p.recert) / 100).toFixed(1) + " " + ring.toFixed(1) + '" /></svg><span class="ring-label">' + p.recert + "%</span></span>" +
+      '<span><span class="recert-title">Recertificação</span><br /><span class="recert-detail">Faltam ' + num(p.faltam) + " h até 31 mar 2027</span></span></a></div></section>" +
+
+      '<section class="resume-band" aria-labelledby="retomada"><div class="container">' +
+      '<div class="resume on-dark"><div class="resume-main"><div>' +
+      '<p class="resume-context">' + lesson.ctx + "</p>" +
+      '<h2 class="resume-title" id="retomada">' + lesson.titulo + "</h2></div>" +
+      '<p class="resume-lesson">' + lesson.nome + "</p>" +
+      '<div class="progress"><div class="progress-track" role="progressbar" aria-label="Progresso da lição" aria-valuenow="' + Math.round(lesson.valor * 100) + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="--valor: ' + lesson.valor + '"></div></div>' +
+      '<div class="progress-meta"><span>' + lesson.meta + "</span><span>" + lesson.pct + "</span></div></div>" +
+      '<div class="resume-actions"><a class="button button-primary" href="' + lesson.href + '">' + icon("play", 16) + "Continuar lição</a>" +
+      '<button class="button button-outline" type="button" data-action="ouvir-licao">' + icon("headphones", 18) + (state.audio ? "Ouvindo agora" : "Ouvir áudio") + "</button></div></div>" +
+      '<div class="resume-next"><p class="eyebrow">A seguir</p><p class="display resume-next-title">' + lesson.prox + "</p>" +
+      '<p class="resume-next-meta">' + lesson.proxMeta + '</p><a class="cta-link" href="#/aprendizado">Ver lição</a></div></div></div></section>' +
+
+      '<section class="band band-white" aria-labelledby="para-voce"><div class="container"><div class="opening">' +
+      '<p class="eyebrow">Para você</p><h2 class="display opening-title" id="para-voce">Selecionado para <em>a sua prática</em>.</h2>' +
+      '<p class="opening-intro">Com base no seu perfil em Cardiologia e no que você fez nesta semana. Cada item diz por que está aqui.</p></div>' +
+      '<div class="cards">' + selection().map(cardHtml).join("") + "</div>" +
+      '<div class="see-all"><a class="button button-primary" href="#/aprendizado">Ver todas as recomendações</a></div></div></section>' +
+
+      '<section class="band band-cream" aria-labelledby="radar-home"><div class="container"><div class="radar-home">' +
+      '<div><p class="eyebrow">Radar da semana</p><h2 class="display section-title" id="radar-home">O que seu paciente vai <em>perguntar</em>.</h2>' +
+      (radarCustom ? '<p class="tag-note">Personalizado com o congresso de ontem</p>' : "") +
+      '<a class="cta-link" href="#/radar">Abrir o Radar</a></div>' +
+      '<ul class="radar-list">' + radarItems().map(function (r) {
+        return '<li><span class="radar-kicker">' + r.k + "</span><span>" + r.t + "</span></li>";
+      }).join("") + "</ul></div></div></section>" +
+
+      '<section class="band band-rose" aria-labelledby="progresso" id="secao-progresso"><div class="container"><div class="opening">' +
+      '<p class="eyebrow">Seu progresso</p><h2 class="display opening-title" id="progresso">Cada lição <em>conta</em>.</h2></div>' +
+      '<dl class="numbers">' +
+      '<div class="number"><dt>Lições concluídas este ano</dt><dd>' + p.licoes + "</dd></div>" +
+      '<div class="number"><dt>De 20 h de EMC exigidas</dt><dd>' + num(p.horas) + '<span class="number-unit"> h</span></dd></div>' +
+      '<div class="number"><dt>Casos resolvidos</dt><dd>' + p.casos + "</dd></div>" +
+      '<div class="number"><dt>Dias de estudo seguidos</dt><dd>' + p.dias + "</dd></div>" +
+      '<div class="number"><dt>No ranking de cardiologistas' + (state.trailDone ? '<span class="number-delta">subiu 2 posições</span>' : "") + "</dt><dd>" + p.ranking + "º</dd></div></dl>" +
+      (state.trailDone
+        ? '<div class="unlocked on-dark"><div><p class="eyebrow">Novos selos desbloqueados</p><ul class="unlocked-list"><li>' + icon("medal", 22) + "Especialista em Cardiologia</li><li>" + icon("medal", 22) + 'Aprendiz Ativo, 20 atividades</li></ul></div><div class="unlocked-actions"><a class="button button-dark" href="#/voce">Ver certificados</a><a class="button button-line" href="#/voce">Ver selos</a></div></div>' +
+          '<div class="next-trail"><div><p class="eyebrow">Continuamos por aqui</p><p class="next-trail-title">Cardio-renal na prática</p><p class="next-trail-meta">Próxima trilha recomendada · 6 lições</p></div><a class="button button-line" href="#/aprendizado">Ver trilha</a></div>'
+        : "") +
+      '<div class="page-foot"><p class="legal">Conteúdo ilustrativo, sujeito a MLR. Material educacional destinado a profissionais de saúde.</p>' +
+      '<p class="footer-links"><a href="#/voce" data-action="ir-secao" data-v="preferencias">Preferências</a><a href="#/voce" data-action="ir-secao" data-v="preferencias">Privacidade</a><button type="button" data-action="why" data-item="inicio">Por que vejo isto</button></p></div>' +
+      "</div></section>";
+  };
+
+  function radarItems() {
+    if (state.eventAttended && state.day === "ter") {
+      return [
+        { k: "Do congresso", t: "Insulina de longa ação: o que muda no risco cardiovascular" },
+        { k: "Do congresso", t: "Cirurgias e medicamentos: quando suspender anticoagulante e iSGLT2" },
+        { k: "Do congresso", t: "Triagem de complicações: rim e coração no diabetes" }
+      ];
+    }
+    return [
+      { k: "Está circulando", t: "Jejum intermitente faz bem ao coração? A evidência em 90 segundos" },
+      { k: "Em 14 dias", t: "Congresso de cardiologia: os estudos que devem mudar a prática" },
+      { k: "Regulatório", t: "Nova diretriz de hipertensão: o que muda na meta de pressão" }
+    ];
+  }
+
+  VIEWS.busca = function () {
+    return page({ eyebrow: "Busca", title: "O que você precisa <em>agora</em>?", narrow: true },
+      '<form class="search-form" role="search" data-form="busca">' +
+      '<label class="visually-hidden" for="busca-input">Buscar no acervo aprovado</label>' + icon("search", 22) +
+      '<input id="busca-input" type="search" autocomplete="off" value="' + esc(state.query) + '" placeholder="Pergunte como você fala: ajuste de dose com creatinina alta" />' +
+      "</form>" +
+      '<p class="search-note">A busca só encontra conteúdo aprovado, com referência. Nenhuma resposta é gerada por IA.</p>' +
+      '<p class="eyebrow search-label">Perguntas frequentes de cardiologistas</p>' +
+      '<div class="chips">' + SUGESTOES.map(function (s, i) {
+        return i === 0
+          ? '<a class="chip" href="#/tema/ajuste-de-dose" data-action="busca-sugestao" data-q="' + s + '">' + s + "</a>"
+          : '<button class="chip" type="button" data-action="busca-sugestao" data-q="' + s + '">' + s + "</button>";
+      }).join("") + "</div>" +
+      '<div id="busca-resultados" aria-live="polite">' + searchResults() + "</div>");
+  };
+
+  function searchResults() {
+    var q = normalize(state.query.trim());
+    if (!q) return "";
+    var words = q.split(/\s+/).filter(function (w) {
+      return w.length > 2;
+    });
+    var found = ACERVO.filter(function (it) {
+      return words.some(function (w) {
+        return it.kw.indexOf(w) > -1 || normalize(it.t).indexOf(w) > -1;
+      });
+    });
+    if (!found.length) return '<p class="search-empty">Nenhum item aprovado para "' + esc(state.query) + '". Tente outras palavras ou abra o <a class="inline-link" href="#/protocolos">acervo</a>.</p>';
+    return '<p class="search-count">' + found.length + (found.length === 1 ? " item aprovado" : " itens aprovados") + "</p><ul class=\"result-list\">" + found.map(function (it) {
+      return '<li><a class="result" href="' + it.href + '"><span class="result-type">' + it.tipo + '</span><span class="result-title">' + it.t + "</span>" + icon("chevron", 20, 2) + "</a></li>";
+    }).join("") + "</ul>";
+  }
+
+  VIEWS.tema = function () {
+    var t = state.triage ? TRIAGE[state.triage] : null;
+    var body = '<div class="edu"><div class="edu-main">' +
+      '<ul class="key-points">' +
+      "<li>Uma alta da creatinina de até 30% nas primeiras semanas depois de iniciar ou aumentar IECA ou BRA é esperada e, em geral, não exige suspender o remédio.</li>" +
+      "<li>Reavalie creatinina e potássio em 1 a 2 semanas depois de cada ajuste.</li>" +
+      "<li>Acima de 30%, ou com potássio acima de 5,5 mmol/L, reduza a dose e procure outras causas: desidratação, anti-inflamatório, estenose de artéria renal.</li>" +
+      "</ul>" +
+      '<p class="edu-ref">Referências: KDIGO 2024 Clinical Practice Guideline for CKD; Diretriz Brasileira de Insuficiência Cardíaca. Revisado em setembro de 2026.</p></div></div>' +
+
+      '<div class="triage"><p class="eyebrow">Triagem</p><h2 class="display section-title">Qual situação apareceu no seu <em>consultório</em>?</h2>' +
+      '<div class="triage-options">' + Object.keys(TRIAGE).map(function (k) {
+        var it = TRIAGE[k];
+        return '<button class="triage-option" type="button" data-action="triagem" data-k="' + k + '" aria-pressed="' + (state.triage === k) + '"><span class="triage-label">' + it.label + '</span><span class="triage-detail">' + it.detail + "</span></button>";
+      }).join("") + "</div></div>";
+
+    if (t) {
+      body += '<div class="kit-result" id="kit-result">' +
+        '<div class="panel"><p class="eyebrow">Para usar agora</p><h3 class="panel-title">TFG CKD-EPI 2021</h3>' +
+        '<div class="calc"><div class="field"><label for="tfg-cr">Creatinina (mg/dL)</label><input id="tfg-cr" type="number" inputmode="decimal" step="0.1" min="0.2" max="15" value="2.1" /></div>' +
+        '<div class="field"><label for="tfg-idade">Idade</label><input id="tfg-idade" type="number" inputmode="numeric" min="18" max="110" value="54" /></div>' +
+        '<div class="field"><label for="tfg-sexo">Sexo</label><select id="tfg-sexo"><option value="m">Masculino</option><option value="f">Feminino</option></select></div></div>' +
+        '<button class="button button-line" type="button" data-action="calc-tfg">Calcular</button>' +
+        '<div class="calc-out" id="tfg-out" aria-live="polite"></div>' +
+        '<p class="fine">Ferramenta de apoio. Não substitui o julgamento clínico. Os valores digitados não são guardados.</p></div>' +
+
+        '<div class="panel panel-material"><p class="eyebrow">Para o paciente</p><h3 class="panel-title">' + t.material + "</h3>" +
+        '<p class="panel-body">Uma página em linguagem simples, com referência e data. Versões para WhatsApp, impressão e QR.</p>' +
+        '<button class="button button-primary" type="button" data-action="sheet" data-sheet="whatsapp" data-material="' + esc(t.material) + '">' + icon("send", 18, 2) + "Enviar ao paciente</button>" +
+        '<p class="social-proof"><b>' + t.n + " cardiologistas</b> enviaram este material nesta semana. Número ilustrativo; só aparece acima de um mínimo de médicos.</p></div></div>";
+    }
+    return page({ eyebrow: "Página educacional · conteúdo aprovado", title: "Ajuste de dose de IECA quando a <em>creatinina sobe</em>", back: "#/busca", backLabel: "Busca" }, body);
+  };
+
+  VIEWS.licao = function (param) {
+    if (param === "arritmias") {
+      return page({ eyebrow: "Cardiologia Avançada · lição 7 de 8", title: "Manejo de <em>arritmias</em>", back: "#/inicio" },
+        '<div class="lesson"><div class="lesson-main">' + videoHtml("Vídeo da lição, 18 minutos", false) +
+        '<div class="panel"><h2 class="panel-title">O conceito em uma frase</h2><p class="panel-body">Na fibrilação atrial, a decisão começa pelo risco de AVC (CHA₂DS₂-VASc) e pelo controle de frequência; o ritmo vem depois.</p></div></div>' +
+        '<aside class="panel"><p class="eyebrow">Próximo passo</p><p class="panel-body">Depois desta lição, o caso "Fibrilação atrial no idoso frágil" entra na sua seleção.</p><a class="cta-link" href="#/inicio">Voltar ao início</a></aside></div>');
+    }
+    var st = state.quiz.licao;
+    var done = state.lessonDone;
+    var right = st.answers.filter(function (a) { return a && a.ok; }).length;
+    var aside;
+    if (done) {
+      aside = '<p class="eyebrow">Lição concluída</p><h2 class="panel-title">' + right + " de 2 acertos</h2>" +
+        (state.quizWrong
+          ? '<p class="panel-body">O tema <b>ajuste de dose</b> ficou em aberto. Ele volta na sua seleção da semana, com um caso clínico.</p>'
+          : '<p class="panel-body">Quiz perfeito. A próxima lição já está liberada.</p>') +
+        '<div class="feedback"><b>Aplique hoje:</b> antes de ajustar a dose, calcule a TFG do paciente. <a class="inline-link" href="#/tema/ajuste-de-dose">Abrir a calculadora</a></div>' +
+        '<div class="stack-actions"><a class="button button-primary" href="#/licao/arritmias">Próxima lição: Manejo de arritmias</a><a class="cta-link" href="#/inicio">Voltar ao início</a></div>';
+    } else if (!state.lessonPlayed) {
+      aside = '<p class="eyebrow">Quiz da lição</p><h2 class="panel-title">Duas perguntas no fim</h2><p class="panel-body">Assista aos últimos 4 minutos. O quiz confirma o que ficou e mostra o que vale rever.</p>' +
+        '<button class="button button-primary" type="button" data-action="licao-concluir">Concluir e fazer o quiz</button>';
+    } else {
+      aside = quizHtml("licao");
+    }
+    return page({ eyebrow: "Cardiologia Avançada · lição 6 de 8", title: "Insuficiência cardíaca com fração de ejeção <em>reduzida</em>", back: "#/inicio" },
+      '<div class="lesson"><div class="lesson-main">' + videoHtml("Vídeo da lição, faltam 4 minutos", state.lessonPlayed) +
+      '<div class="panel"><h2 class="panel-title">O conceito em uma frase</h2><p class="panel-body">Na ICFEr, quatro classes reduzem mortalidade e são iniciadas em etapas; cada ajuste de dose olha o rim e o potássio, sem suspender por altas esperadas da creatinina.</p></div></div>' +
+      '<aside class="panel lesson-aside" aria-live="polite">' + aside + "</aside></div>");
+  };
+
+  function videoHtml(label, played) {
+    return '<div class="video' + (played ? " is-played" : "") + '"><button class="video-play" type="button" data-action="licao-play" aria-label="' + (played ? "Assistido" : "Assistir: " + label) + '">' + (played ? icon("check", 30, 2.5) : icon("play", 30)) + "</button>" +
+      '<div class="video-bar"><span style="transform: scaleX(' + (played ? 1 : 0.75) + ')"></span></div>' +
+      '<p class="video-meta">' + (played ? "16 de 16 min · assistido" : "12 de 16 min") + "</p></div>";
+  }
+
+  VIEWS.caso = function () {
+    var body;
+    if (state.caseDone) {
+      var wrong = state.caseAnswers.filter(function (a) { return !a.ok; }).length;
+      body = '<div class="lesson"><div class="panel"><p class="eyebrow">Caso concluído</p><h2 class="panel-title">' + (3 - wrong) + " de 3 decisões alinhadas às diretrizes</h2>" +
+        '<div class="feedback"><b>Aplique hoje:</b> envie ao seu paciente o material "Seus rins e seu coração".</div>' +
+        '<div class="stack-actions"><button class="button button-primary" type="button" data-action="sheet" data-sheet="whatsapp" data-material="Seus rins e seu coração">' + icon("send", 18, 2) + "Enviar material</button>" +
+        '<a class="cta-link" href="#/licao/ic-fer">' + (wrong ? "Lição de reforço: o ponto em que você errou" : "Rever a lição de ajuste de dose") + "</a></div></div>" + caseRules() + "</div>";
+    } else {
+      var it = CASO[state.caseStep];
+      var ans = state.caseAnswers[state.caseStep];
+      body = '<div class="lesson"><div class="panel case">' +
+        '<div class="steps" aria-hidden="true">' + CASO.map(function (_, i) { return '<span class="' + (i <= state.caseStep ? "is-on" : "") + '"></span>'; }).join("") + "</div>" +
+        '<p class="eyebrow">Etapa ' + (state.caseStep + 1) + " de 3 · " + it.etapa + "</p>" +
+        '<p class="case-history">' + it.h + "</p>" +
+        '<h2 class="quiz-q">' + it.q + "</h2>" +
+        '<div class="options" role="radiogroup" aria-label="Opções">' + it.o.map(function (o, i) {
+          var cls = "";
+          if (ans) {
+            if (i === it.a) cls = " is-right";
+            else if (i === ans.choice) cls = " is-wrong";
+          } else if (state.caseChoice === i) cls = " is-selected";
+          return '<button class="option' + cls + '" type="button" role="radio" aria-checked="' + (state.caseChoice === i) + '" data-action="caso-escolha" data-i="' + i + '"' + (ans ? " disabled" : "") + ">" + o + "</button>";
+        }).join("") + "</div>" +
+        (ans
+          ? '<div class="feedback' + (ans.ok ? "" : " is-bad") + '">' + it.f + "<cite>Referência: " + it.r + "</cite></div>" +
+            '<button class="button button-primary" type="button" data-action="caso-proxima">' + (state.caseStep < 2 ? "Próxima etapa" : "Concluir caso") + "</button>"
+          : '<button class="button button-primary" type="button" data-action="caso-decidir"' + (state.caseChoice === null ? " disabled" : "") + ">Decidir</button>") +
+        "</div>" + caseRules() + "</div>";
+    }
+    var w = WHY.caso();
+    return page({ eyebrow: "Caso clínico · paciente fictício · cerca de 25 min", title: "Rim e coração no mesmo <em>paciente</em>", back: "#/inicio" },
+      '<p class="card-why page-why">' + esc(w.motivo) + "</p>" + body);
+  };
+
+  function caseRules() {
+    return '<aside class="panel"><h2 class="panel-title">Como funciona</h2><ul class="rules"><li>Paciente fictício.</li><li>Só evidência e referências aprovadas.</li><li>Errar não tira ponto: o ponto em que você errou vira uma lição de reforço.</li><li>Revisado pelo MLR antes de publicar.</li></ul></aside>';
+  }
+
+  function eventCard(o) {
+    return '<article class="event' + (o.ink ? " event-ink on-dark" : "") + (o.day ? "" : " event-plain") + '">' +
+      (o.day ? '<p class="event-date"><span class="event-weekday">' + o.weekday + '</span><b class="event-day">' + o.day + '</b><span class="event-month">' + o.month + "</span></p>" : "") +
+      '<div class="event-main">' + (o.kind ? '<p class="event-kind">' + o.kind + "</p>" : "") + '<h2 class="event-title">' + o.title + "</h2>" +
+      (o.body ? '<p class="event-body">' + o.body + "</p>" : "") +
+      '<ul class="event-facts">' + o.facts.map(function (f) {
+        return "<li>" + (f[0] ? icon(f[0], 16, 2) : "") + f[1] + "</li>";
+      }).join("") + "</ul>" + (o.extra || "") + "</div>" +
+      '<div class="event-action">' + o.action + "</div></article>";
+  }
+
+  VIEWS.congressos = function () {
+    var ter = state.day === "ter";
+    var replay = state.liveMissed && ter;
+    var tags = (state.liveSignup ? '<span class="tag">' + icon("check", 14, 2.5) + "Inscrito</span>" : "") + (state.liveReminder ? '<span class="tag">Lembrete: ' + state.liveReminder + "</span>" : "");
+    var live = eventCard({
+      ink: true,
+      weekday: "seg.",
+      day: "5",
+      month: "out",
+      kind: replay ? '<span class="tag tag-accent">Você não assistiu: replay pronto</span>' : ter ? "Live de ontem" : '<span class="live-dot" aria-hidden="true"></span>Ao vivo hoje, às 19h',
+      title: "Atualização em Cardiologia 2026",
+      body: replay ? "Com o Dr. Ricardo Alves (KOL fictício). A live virou 3 lições curtas, que contam para a sua trilha." : "Com o Dr. Ricardo Alves (KOL fictício). Se não puder assistir, o replay chega em 3 lições no dia seguinte.",
+      facts: [["clock", "45 min"], ["medal", "Certificado de participação"]],
+      extra: tags ? '<p class="event-tags">' + tags + "</p>" : "",
+      action: '<a class="button button-primary" href="' + (replay ? "#/replay/cardio-2026" : "#/live/cardio-2026") + '">' + icon("play", 16) + (replay ? "Iniciar replay" : "Ver live") + "</a>"
+    });
+    var next = eventCard({
+      weekday: "qua.",
+      day: "14",
+      month: "out",
+      kind: "Live",
+      title: "Caso a caso: insuficiência cardíaca na prática",
+      facts: [["clock", "19h, 40 min"], ["medal", "Certificado de participação"]],
+      action: '<button class="button button-line" type="button" data-action="inscrever-proxima" aria-pressed="' + !!state.nextLiveSignup + '">' + (state.nextLiveSignup ? icon("check", 16, 2.5) + "Inscrito" : "Inscrever") + "</button>"
+    });
+    var congresso = eventCard({
+      weekday: "seg.",
+      day: "19",
+      month: "out",
+      kind: "Congresso",
+      title: "Congresso de Cardiologia 2026",
+      body: "No estande da Lilly, o QR abre o conteúdo do evento em 2 toques.",
+      facts: [["calendar", "19 a 21 de outubro"], ["layers", "Estande Lilly"]],
+      action: '<a class="button button-dark" href="#/qr">Ver o QR do estande</a>'
+    });
+    return page({ eyebrow: "Congressos e ao vivo", title: "Agenda da <em>semana</em>.", intro: "Lives, congressos e replays de cardiologia. Inscreva-se e escolha quando quer ser lembrado." },
+      '<div class="events">' + live + next + congresso + "</div>");
+  };
+
+  VIEWS.live = function () {
+    var ter = state.day === "ter";
+    var ready = state.liveSignup && state.liveReminder;
+    return page({ eyebrow: "Live · segunda, 5 de outubro, 19h · 45 min", title: "Atualização em Cardiologia <em>2026</em>", back: "#/congressos", backLabel: "Congressos" },
+      (state.liveMissed && ter ? '<div class="banner">' + icon("info", 20, 2) + '<p>Você não conseguiu assistir. O replay já está pronto, em 3 lições curtas.</p><a class="cta-link" href="#/replay/cardio-2026">Iniciar replay</a></div>' : "") +
+      '<div class="lesson"><div class="lesson-main"><div class="card-media media-ink live-media" aria-hidden="true">' + MEDIA.wave + '<span class="card-media-tag">Ao vivo</span></div>' +
+      '<div class="panel"><h2 class="panel-title">O que você vai ver</h2><ul class="rules"><li>O que mudou nas diretrizes de insuficiência cardíaca em 2026.</li><li>Três casos práticos, com votação ao vivo.</li><li>Perguntas ao especialista no fim.</li></ul></div></div>' +
+      '<aside class="panel lesson-aside"><p class="eyebrow">Com o Dr. Ricardo Alves</p><p class="panel-body">KOL fictício. Certificado de participação para quem assistir ao vivo ou ao replay.</p>' +
+      '<div class="stack-actions">' +
+      '<button class="button ' + (state.liveSignup ? "button-line" : "button-primary") + '" type="button" data-action="live-inscrever" aria-pressed="' + state.liveSignup + '">' + (state.liveSignup ? icon("check", 18, 2.5) + "Inscrito" : "Inscrever") + "</button>" +
+      '<button class="button button-line" type="button" data-action="live-lembrar" aria-expanded="' + !!state.liveReminderOpen + '">' + icon("clock", 18, 2) + (state.liveReminder ? "Lembrete: " + state.liveReminder : "Lembrar no meu horário") + "</button></div>" +
+      (state.liveReminderOpen ? '<div class="chips reminder-chips" role="group" aria-label="Quando lembrar">' + ["Na manhã do dia", "1 hora antes", "15 minutos antes"].map(function (o) {
+        return '<button class="chip" type="button" data-action="live-lembrete" data-v="' + o + '" aria-pressed="' + (state.liveReminder === o) + '">' + o + "</button>";
+      }).join("") + "</div>" : "") +
+      (ready ? '<p class="fine">Pronto. Se você não puder assistir, o replay chega em 3 lições no dia seguinte, sem outro convite.</p>' : "") +
+      "</aside></div>");
+  };
+
+  VIEWS.replay = function () {
+    var seen = state.replaySeen.length;
+    return page({ eyebrow: "Replay decomposto · live de segunda", title: "Atualização em Cardiologia 2026, em 3 <em>lições</em>", back: "#/inicio", intro: "Você se inscreveu e não conseguiu assistir. A live virou três lições curtas, que contam para a sua trilha e para as horas de EMC." },
+      '<ol class="replay-list">' + REPLAY.map(function (l, i) {
+        var done = state.replaySeen.indexOf(i) > -1;
+        return '<li class="replay-item' + (done ? " is-done" : "") + '"><span class="replay-num">' + (done ? icon("check", 20, 2.5) : i + 1) + '</span><span class="replay-text"><span class="replay-title">Lição ' + (i + 1) + ": " + l.t + '</span><span class="replay-meta">' + l.d + " min</span></span>" +
+          '<button class="button ' + (done ? "button-line" : "button-primary") + '" type="button" data-action="replay-ver" data-i="' + i + '">' + (done ? "Assistida" : icon("play", 14) + "Assistir") + "</button></li>";
+      }).join("") + "</ol>" +
+      '<div class="replay-foot"><button class="cta-link" type="button" data-action="sheet" data-sheet="resumo">Ver resumo</button>' +
+      (seen === 3 ? '<p class="done-note">' + icon("check", 18, 2.5) + "Replay concluído: 3 lições e 0,4 h de EMC cada.</p>" : '<p class="fine">' + seen + " de 3 lições assistidas.</p>") + "</div>");
+  };
+
+  VIEWS.qr = function () {
+    var phone;
+    if (state.qrStep === 0) {
+      phone = '<p class="phone-kicker">Estande Lilly · Congresso de Cardiologia 2026</p>' +
+        '<div class="qr" aria-hidden="true">' + qrSvg() + "</div>" +
+        '<p class="phone-title">Acesse agora: conteúdo do evento</p>' +
+        '<button class="button button-primary" type="button" data-action="qr-escanear">Escanear com a câmera</button>';
+    } else {
+      phone = '<img class="phone-logo" src="assets/lilly-logo-vermelho.svg" alt="Lilly" width="54" height="30" />' +
+        '<p class="phone-kicker">Lilly360</p><p class="phone-title">Reconhecemos você pelo CRM</p>' +
+        '<div class="phone-id"><span class="avatar">PF</span><span><b>Dr. Paulo Ferreira</b><br />Cardiologia · CRM-SP 000000 (ilustrativo)</span></div>' +
+        '<button class="button button-primary" type="button" data-action="qr-entrar">Entrar</button>' +
+        '<p class="fine">Não é você? Entrar com e-mail e código.</p>';
+    }
+    return page({ eyebrow: "No congresso", title: "Do QR ao conteúdo em <em>2 toques</em>", intro: "O médico vê o QR na parede do estande e aponta o celular.", back: "#/congressos", backLabel: "Congressos" },
+      '<div class="phone-stage"><div class="phone">' + phone + "</div></div>");
+  };
+
+  function qrSvg() {
+    var cells = "";
+    var seed = 7;
+    for (var y = 0; y < 21; y++) {
+      for (var x = 0; x < 21; x++) {
+        var finder = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
+        if (finder) continue;
+        seed = (seed * 9301 + 49297) % 233280;
+        if (seed / 233280 > 0.52) cells += '<rect x="' + x * 8 + '" y="' + y * 8 + '" width="8" height="8" />';
+      }
+    }
+    function finderAt(x, y) {
+      return '<rect x="' + x + '" y="' + y + '" width="56" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="8" /><rect x="' + (x + 16) + '" y="' + (y + 16) + '" width="24" height="24" rx="3" />';
+    }
+    return '<svg viewBox="-4 -4 176 176" width="176" height="176" fill="currentColor">' + cells + finderAt(0, 0) + finderAt(112, 0) + finderAt(0, 112) + "</svg>";
+  }
+
+  VIEWS.evento = function () {
+    return page({ eyebrow: "Congresso de Cardiologia 2026 · estande Lilly", title: "O conteúdo do <em>estande</em>", back: "#/congressos", backLabel: "Congressos" },
+      '<h2 class="sub-title">Slides apresentados</h2><div class="slides">' +
+      ["Cardio-renal-metabólico: o que muda em 2026", "ICFEr: titulação em quatro etapas", "Diabetes e coração: novas metas"].map(function (s, i) {
+        return '<button class="slide" type="button" data-action="evento-abrir" data-v="' + s + '"><span class="card-media ' + (i === 1 ? "media-ink" : "media-rose") + '" aria-hidden="true">' + MEDIA.slides + '</span><span class="slide-title">' + s + "</span></button>";
+      }).join("") + "</div>" +
+      '<div class="two-col"><div class="panel"><p class="eyebrow">Material do KOL</p><h3 class="panel-title">Dra. Helena Prado (fictícia): rim e coração no consultório</h3><p class="panel-body">PDF de 12 páginas, com as referências da palestra.</p>' +
+      '<div class="stack-actions row"><button class="button button-primary" type="button" data-action="evento-abrir" data-v="Material do KOL">Ler aqui</button><button class="button button-line" type="button" data-action="evento-abrir" data-v="Download do material">' + icon("download", 18, 2) + "Baixar</button></div></div>" +
+      '<div class="panel"><p class="eyebrow">Links e referências</p><ul class="link-list">' +
+      ["KDIGO 2024: doença renal crônica", "ESC 2023: atualização em insuficiência cardíaca", "Diretriz Brasileira de Insuficiência Cardíaca"].map(function (l) {
+        return '<li><button type="button" data-action="evento-abrir" data-v="' + l + '">' + icon("link", 18, 2) + l + "</button></li>";
+      }).join("") + "</ul></div></div>" +
+      '<div class="next-box"><p class="eyebrow">Próximo passo</p><p>Amanhã, o Radar de sinais mostra o que muda para o seu paciente depois deste congresso.</p>' +
+      '<button class="cta-link" type="button" data-action="salvar-kit">' + (state.savedKit ? "Salvo no seu kit" : "Salvar no meu kit") + "</button></div>");
+  };
+
+  VIEWS.radar = function () {
+    var custom = state.eventAttended && state.day === "ter";
+    var items = custom
+      ? [
+          { k: "Insulina de longa ação", t: "Pacientes com diabetes vão perguntar se a insulina de longa ação pesa no coração.", r: "Explique que o controle glicêmico estável reduz complicações e que o plano é revisado com os exames." },
+          { k: "Cirurgias e medicamentos", t: "Quem vai operar quer saber se para o anticoagulante e o iSGLT2.", r: "A suspensão depende do tipo de cirurgia; o iSGLT2 costuma ser suspenso alguns dias antes." },
+          { k: "Triagem de complicações", t: "Rim e coração no diabetes: quais exames pedir por ano.", r: "TFG e albuminúria anuais, pressão e perfil lipídico; o rim também é órgão-alvo." }
+        ]
+      : [
+          { k: "Está circulando", t: "Jejum intermitente faz bem ao coração?", r: "A evidência é limitada; o que pesa é o padrão alimentar e a perda de peso sustentada." },
+          { k: "Em 14 dias", t: "Congresso de cardiologia: os estudos que devem mudar a prática.", r: "Um resumo em 90 segundos chega no dia do congresso." },
+          { k: "Regulatório", t: "Nova diretriz de hipertensão: o que muda na meta de pressão.", r: "Notícia factual, com link para a fonte oficial." }
+        ];
+    return page({ eyebrow: "Radar de sinais · semana de 5 de outubro", title: "O que seu paciente vai te perguntar nesta <em>semana</em>.", intro: custom ? "Personalizado com o seu aprendizado do congresso de ontem." : "Curado pela área médica da Lilly para cardiologistas." },
+      (custom ? '<p class="tag-note">' + icon("check", 16, 2.5) + "Atualizado com o congresso de ontem</p>" : "") +
+      '<div class="radar-cards">' + items.map(function (it) {
+        return '<article class="panel radar-card"><p class="eyebrow">' + it.k + '</p><h2 class="panel-title">' + it.t + '</h2><p class="panel-body"><b>O que responder:</b> ' + it.r + '</p><a class="cta-link" href="#/pacientes">Material para o paciente</a></article>';
+      }).join("") + "</div>");
+  };
+
+  VIEWS.trilha = function () {
+    var lessons = ["O coração como bomba", "Pressão arterial e risco", "Lipídios e aterosclerose", "Diabetes e coração", "O rim como órgão-alvo", "Insuficiência cardíaca: o básico", "Arritmias: o básico", "Prevenção no consultório"];
+    var aside = state.trailDone
+      ? '<p class="eyebrow">Trilha concluída</p><a class="button button-primary" href="#/conclusao">Ver certificado</a>'
+      : state.quiz.final.i === 0 && !state.quiz.final.answers.length && !state.finalStarted
+        ? '<p class="eyebrow">Quiz final</p><h2 class="panel-title">Falta só o quiz final</h2><p class="panel-body">Duas perguntas. Ao concluir, você recebe o certificado e o selo.</p><button class="button button-primary" type="button" data-action="final-iniciar">Fazer quiz final</button>'
+        : quizHtml("final");
+    return page({ eyebrow: "Trilha", title: "Cardiologia - <em>Fundamentos</em>", back: "#/aprendizado", backLabel: "Aprendizado", intro: "8 lições e um quiz final. 6 horas de EMC." },
+      '<div class="lesson"><ol class="trail-list">' + lessons.map(function (l, i) {
+        return '<li class="is-done"><span class="replay-num">' + icon("check", 18, 2.5) + '</span><span>Lição ' + (i + 1) + ": " + l + "</span></li>";
+      }).join("") + "</ol>" +
+      '<aside class="panel lesson-aside" aria-live="polite">' + aside + "</aside></div>");
+  };
+
+  VIEWS.conclusao = function () {
+    if (!state.trailDone) return VIEWS.trilha();
+    return page({ eyebrow: "Parabéns", title: "Você concluiu a trilha Cardiologia - <em>Fundamentos</em>.", back: "#/aprendizado", backLabel: "Aprendizado" },
+      '<div class="lesson"><div class="certificate"><img class="certificate-logo" src="assets/lilly-logo-vermelho.svg" alt="Lilly" width="54" height="30" /><p class="eyebrow">Certificado de conclusão</p>' +
+      '<p class="certificate-name">Dr. Paulo Ferreira</p><p class="certificate-text">concluiu a trilha <b>Cardiologia - Fundamentos</b>, com 8 lições e quiz final, somando 6 horas de educação médica continuada.</p>' +
+      '<p class="certificate-foot">Emitido em 5 de outubro de 2026 · código de verificação L360-7Q2K (ilustrativo)</p></div>' +
+      '<aside class="panel lesson-aside"><div class="badge-earned">' + icon("medal", 36) + '<span><b>Selo ganho:</b> Especialista em Cardiologia</span></div>' +
+      '<div class="stack-actions"><a class="button button-primary" href="#/social" data-action="compartilhar">' + icon("share", 18, 2) + "Compartilhar no LinkedIn</a>" +
+      '<button class="button button-line" type="button" data-action="baixar-certificado">' + icon("download", 18, 2) + "Baixar certificado</button></div>" +
+      '<p class="fine">Selos reconhecem aprendizado. Não são trocáveis por produtos, serviços ou benefícios.</p></aside></div>');
+  };
+
+  function defaultPost() {
+    return "Concluí a trilha Cardiologia - Fundamentos no Lilly360: 8 lições sobre insuficiência cardíaca, rim e risco cardiovascular. Atualização contínua também é cuidado com o paciente.\n\n#Cardiologia #EducaçãoMédica #Lilly360";
+  }
+
+  VIEWS.social = function () {
+    var text = state.postText === null ? defaultPost() : state.postText;
+    return page({ eyebrow: "Social Content Lab", title: "Seu post, pronto para <em>publicar</em>", back: "#/conclusao", backLabel: "Conclusão", intro: "Certificado, texto e hashtags aprovados pelo MLR. Você pode editar o texto; a arte e o ID de aprovação não mudam." },
+      '<div class="lab"><div class="lab-form">' +
+      '<p class="eyebrow">Formato</p><div class="chips" role="group" aria-label="Formato">' +
+      [["post", "Post do LinkedIn"], ["carrossel", "Carrossel"]].map(function (f) {
+        return '<button class="chip" type="button" data-action="post-formato" data-v="' + f[0] + '" aria-pressed="' + (state.postFormat === f[0]) + '">' + f[1] + "</button>";
+      }).join("") + "</div>" +
+      '<label class="eyebrow" for="post-text">Texto</label><textarea id="post-text" rows="7">' + esc(text) + "</textarea>" +
+      '<button class="button button-primary" type="button" data-action="sheet" data-sheet="linkedin"' + (state.posted ? " disabled" : "") + ">" + icon("share", 18, 2) + (state.posted ? "Publicado" : "Publicar no LinkedIn") + "</button></div>" +
+      '<div class="artboard"><div class="art' + (state.postFormat === "carrossel" ? " art-square" : "") + '"><img src="assets/lilly-logo-vermelho.svg" alt="" width="40" height="22" class="art-logo" /><p class="eyebrow">Trilha concluída</p><p class="art-title">Cardiologia - <em>Fundamentos</em></p><p class="art-name">Dr. Paulo Ferreira · Cardiologista</p><p class="art-foot">Material educacional · ID de aprovação PP-BR-0000 (ilustrativo)</p></div></div></div>');
+  };
+
+  var PREFS = [
+    ["mail", "E-mail semanal", "Segunda às 7h30"],
+    ["phone", "Lembrete por WhatsApp", ""],
+    ["sliders", "Uso do meu comportamento para personalizar", ""],
+    ["layers", "Comparação anônima com colegas", ""]
+  ];
+
+  VIEWS.voce = function () {
+    var p = progress();
+    var ganhos = SELOS.filter(function (s) { return s.earned(); });
+    var bloqueados = SELOS.filter(function (s) { return !s.earned(); });
+    var certificados = (state.trailDone ? [["Cardiologia - Fundamentos", "6 h de EMC"]] : []).concat([["Cardiologia Clínica", "8 h de EMC"]]);
+    return page({ eyebrow: "Você", title: "Dr. Paulo <em>Ferreira</em>", intro: "Cardiologista · profissional de saúde verificado pelo CRM e RQE." },
+      '<dl class="numbers numbers-compact">' +
+      '<div class="number"><dt>Lições no ano</dt><dd>' + p.licoes + '</dd></div><div class="number"><dt>Horas de EMC</dt><dd>' + num(p.horas) + '</dd></div><div class="number"><dt>Casos</dt><dd>' + p.casos + '</dd></div><div class="number"><dt>Ranking</dt><dd>' + p.ranking + "º</dd></div></dl>" +
+      '<section class="panel kit voce-selos"><header class="kit-head"><h2 class="display kit-title">Selos</h2><p class="kit-sub">' + ganhos.length + " de " + SELOS.length + ' conquistados</p></header><div class="badges">' + ganhos.concat(bloqueados).map(function (s) {
+        var on = ganhos.indexOf(s) !== -1;
+        return '<div class="badge' + (on ? "" : " is-locked") + '"><span class="badge-icon">' + icon(on ? "medal" : "lock", 28) + "</span><b>" + s.n + "</b><span>" + s.d + "</span>" + (on ? '<button class="text-button" type="button" data-action="selo-linkedin" data-v="' + s.n + '">Adicionar ao LinkedIn</button>' : "") + "</div>";
+      }).join("") + "</div></section>" +
+      '<div class="two-col voce-cols">' +
+      '<section class="panel kit"><header class="kit-head"><h2 class="display kit-title">Certificados</h2></header><ul class="kit-list">' +
+      certificados.map(function (c) {
+        return '<li><button class="kit-row" type="button" data-action="baixar-certificado">' + kitRow("file", c[0], c[1], '<span class="kit-go">' + icon("download", 16, 2) + '<span class="kit-go-label">Baixar</span></span>') + "</button></li>";
+      }).join("") + "</ul></section>" +
+      '<section class="panel kit"><header class="kit-head"><h2 class="display kit-title" id="preferencias">Preferências e <em>consentimentos</em></h2></header><ul class="kit-list">' +
+      PREFS.map(function (pr) {
+        return '<li class="kit-row is-static">' + kitRow(pr[0], pr[1], pr[2], '<span class="pref-on">Sim</span>') + "</li>";
+      }).join("") + "</ul></section></div>");
+  };
+
+  VIEWS.aprendizado = function () {
+    return page({ eyebrow: "Aprendizado", title: "Suas <em>trilhas</em>", intro: "Micro-lições com quiz, casos clínicos e replays." },
+      '<div class="radar-cards">' +
+      '<article class="panel"><p class="eyebrow">Em andamento</p><h2 class="panel-title">Cardiologia Avançada</h2><p class="panel-body">Lição ' + (state.lessonDone ? "7" : "6") + ' de 8.</p><a class="cta-link" href="' + (state.lessonDone ? "#/licao/arritmias" : "#/licao/ic-fer") + '">Continuar</a></article>' +
+      '<article class="panel"><p class="eyebrow">' + (state.trailDone ? "Concluída" : "Falta o quiz final") + '</p><h2 class="panel-title">Cardiologia - Fundamentos</h2><p class="panel-body">8 de 8 lições.</p><a class="cta-link" href="' + (state.trailDone ? "#/conclusao" : "#/trilha/cardio-fundamentos") + '">' + (state.trailDone ? "Ver certificado" : "Fazer quiz final") + "</a></article>" +
+      '<article class="panel"><p class="eyebrow">Caso clínico</p><h2 class="panel-title">Rim e coração no mesmo paciente</h2><p class="panel-body">Cerca de 25 min.</p><a class="cta-link" href="#/caso/rim-coracao">Abrir caso</a></article></div>');
+  };
+
+  var KIT_FERRAMENTAS = [
+    ["calc", "TFG CKD-EPI 2021", "Usada 3 vezes este mês"],
+    ["sliders", "Simulador de titulação", "Ajuste em etapas, conforme bula"],
+    ["heart", "Risco cardiovascular", "Framingham, em 10 anos"]
+  ];
+
+  var KIT_MATERIAIS = [
+    ["Seu remédio do coração e os exames de rim", "Folheto de 2 páginas", "file"],
+    ["Seus rins e seu coração", "Vídeo de 3 minutos", "play"],
+    ["Potássio alto: o que comer e o que evitar", "Lista de alimentos, 1 página", "file"],
+    ["Insuficiência cardíaca: o que muda a partir de agora", "Guia de 4 páginas", "file"]
+  ];
+
+  function kitRow(ico, name, detail, end) {
+    return '<span class="kit-icon">' + icon(ico, 20, 1.75) + '</span><span class="kit-text"><span class="kit-name">' + name + '</span><span class="kit-detail">' + detail + "</span></span>" + end;
+  }
+
+  VIEWS.pacientes = function () {
+    var enviados = state.signals.filter(function (s) { return s.nome === "material_enviado"; }).map(function (s) { return s.props.material; });
+    return page({ eyebrow: "Meus pacientes · kit de consulta", title: "Para usar com o paciente na sua <em>frente</em>", intro: "Ferramentas e materiais reordenados pelo seu uso." },
+      '<div class="two-col kits">' +
+      '<section class="panel kit"><header class="kit-head"><h2 class="display kit-title">Ferramentas</h2><p class="kit-sub">Calculadoras para usar durante a consulta.</p></header><ul class="kit-list">' +
+      KIT_FERRAMENTAS.map(function (t) {
+        return '<li><a class="kit-row" href="#/tema/ajuste-de-dose">' + kitRow(t[0], t[1], t[2], '<span class="kit-go">' + icon("chevron", 20, 2) + "</span>") + "</a></li>";
+      }).join("") +
+      '</ul><p class="fine kit-foot">Ferramentas de apoio. Não substituem o julgamento clínico.</p></section><section class="panel kit"><header class="kit-head"><h2 class="display kit-title">Material para o <em>paciente</em></h2><p class="kit-sub">Envie por WhatsApp, imprima ou mostre o QR.</p></header><ul class="kit-list">' +
+      KIT_MATERIAIS.map(function (m) {
+        var foi = enviados.indexOf(m[0]) !== -1;
+        var end = foi ? '<span class="kit-go is-sent">' + icon("check", 16, 2.25) + "<span class=\"kit-go-label\">Enviado</span></span>" : '<span class="kit-go">' + icon("send", 16, 2) + "<span class=\"kit-go-label\">Enviar</span></span>";
+        return '<li><button class="kit-row" type="button" data-action="sheet" data-sheet="whatsapp" data-material="' + m[0] + '">' + kitRow(m[2], m[0], m[1], end) + "</button></li>";
+      }).join("") + '</ul><p class="fine kit-foot">Linguagem simples, revisada pela equipe médica.</p></section></div>');
+  };
+
+  VIEWS.protocolos = function () {
+    var docs = [
+      ["KDIGO 2024: avaliação e manejo da DRC", "Diretriz internacional, 2024"],
+      ["ESC 2021: insuficiência cardíaca", "Diretriz europeia, 2021"],
+      ["Diretriz Brasileira de Insuficiência Cardíaca", "Diretriz nacional, 2021"],
+      ["iSGLT2 na doença renal crônica: revisão", "Revisão sistemática, 2025"],
+      ["Tremor e betabloqueador: o que investigar", "Artigo de revisão, 2023"]
+    ];
+    return page({ eyebrow: "Protocolos · acervo", title: "Estudos e <em>diretrizes</em>", intro: "Leia aqui, com o leitor do acervo, ou baixe o PDF." },
+      '<section class="panel kit kit-single"><ul class="kit-list">' +
+      docs.map(function (d) {
+        return '<li class="kit-row doc-row">' + kitRow("file", d[0], d[1], '<span class="doc-actions">' +
+          '<button class="text-button" type="button" data-action="ler-doc" data-v="' + d[0] + '">' + icon("book", 16, 2) + "Ler aqui</button>" +
+          '<button class="text-button" type="button" data-action="ler-doc" data-v="' + d[0] + '" data-download="1">' + icon("download", 16, 2) + "Baixar</button></span>") + "</li>";
+      }).join("") + '</ul><p class="fine kit-foot">Documentos de terceiros, reproduzidos com autorização para fins educacionais.</p></section>');
+  };
+
+  VIEWS.parceiros = function () {
+    return page({ eyebrow: "Parceiros · patrocinado", title: "Conteúdo de <em>parceiros</em>", intro: "Conteúdo patrocinado, sempre identificado e separado do conteúdo educacional." }, '<div class="empty-state">' + icon("layers", 32, 1.75) +
+      '<h2 class="empty-title">Nenhum conteúdo de parceiros nesta semana</h2>' +
+      '<p class="empty-body">Quando houver, ele aparece aqui, com o selo de patrocinado e separado das suas trilhas e do acervo.</p>' +
+      '<a class="button button-line" href="#/aprendizado">Voltar às suas trilhas</a></div>');
+  };
+
+  var CANAIS = [
+    {
+      nome: "Informação médica",
+      texto: "Dúvidas científicas sobre medicamentos Lilly: posologia, interações e uso em populações especiais. Quem responde é um médico ou farmacêutico da equipe.",
+      fatos: [["clock", "Resposta em até 2 dias úteis"], ["phone", "0800 000 0001"], ["mail", "informacaomedica@lilly360.com.br"], ["calendar", "Seg. a sex., das 8h às 18h"]],
+      acao: "Enviar pergunta"
+    },
+    {
+      nome: "Farmacovigilância",
+      texto: "Relate um evento adverso ou uma queixa técnica de produto Lilly assim que souber. Não é preciso identificar o paciente.",
+      fatos: [["clock", "Atendimento imediato"], ["phone", "0800 000 0002"], ["calendar", "Todos os dias, 24 horas"]],
+      acao: "Relatar evento adverso"
+    },
+    {
+      nome: "Suporte da plataforma",
+      texto: "Acesso e login, certificados, horas de educação médica continuada e preferências de contato.",
+      fatos: [["clock", "Resposta em até 1 dia útil"], ["mail", "suporte@lilly360.com.br"], ["calendar", "Seg. a sex., das 8h às 20h"]],
+      acao: "Abrir chamado"
+    }
+  ];
+
+  VIEWS.equipe = function () {
+    var canais = CANAIS.map(function (c) {
+      return eventCard({
+        title: c.nome,
+        body: c.texto,
+        facts: c.fatos,
+        action: '<button class="button button-line" type="button" data-action="contato" data-v="' + c.nome + '">' + c.acao + "</button>"
+      });
+    }).join("");
+    var pedidos = state.contacts.length
+      ? '<section class="requests" aria-labelledby="pedidos"><h2 class="sub-title" id="pedidos">Seus pedidos</h2><ul class="request-list">' + state.contacts.map(function (p) {
+          return '<li><span class="request-name">' + p.canal + '</span><span class="request-code">Protocolo ' + p.codigo + '</span><span class="tag">' + icon("check", 14, 2.5) + "Recebido hoje</span></li>";
+        }).join("") + "</ul></section>"
+      : "";
+    return page({ eyebrow: "Falar com a equipe", title: "Fale com a <em>Lilly</em>", intro: "Escolha o canal pelo assunto. Cada um tem a sua equipe e o seu prazo de resposta." },
+      '<div class="events channels">' + canais + "</div>" + pedidos +
+      '<p class="fine channels-note">Telefones e e-mails ilustrativos. Em uma urgência com o paciente, siga o protocolo do seu serviço: estes canais não atendem emergências.</p>');
+  };
+
+  /* ---------- Folhas (diálogos) ---------- */
+
+  function renderSheet() {
+    var root = $("#sheet-root");
+    var s = state.sheet;
+    clearTimeout(sheetTimer);
+    if (!s) {
+      if (!root.firstChild || root.classList.contains("is-leaving")) return;
+      if (reducedMotion()) {
+        root.innerHTML = "";
+        return;
+      }
+      root.classList.add("is-leaving");
+      sheetTimer = setTimeout(function () {
+        root.innerHTML = "";
+        root.classList.remove("is-leaving");
+      }, 180);
+      return;
+    }
+    var wasOpen = !!root.firstChild && !root.classList.contains("is-leaving");
+    root.classList.remove("is-leaving");
+    root.classList.toggle("is-static", wasOpen);
+    var title = "";
+    var body = "";
+    if (s.type === "whatsapp") {
+      title = s.done ? "Material enviado" : "Enviar ao paciente";
+      body = s.done
+        ? '<p class="done-note">' + icon("check", 20, 2.5) + "Enviado pelo WhatsApp.</p>" +
+          (state.flow === 1 && state.goal !== null ? '<p class="sheet-big">' + state.goal + " toques · " + state.goalSecs + " segundos</p>" : "") +
+          '<p class="panel-body">Próximo passo: material relacionado ao mesmo caso, "Potássio alto: o que comer e o que evitar".</p>' +
+          '<div class="stack-actions"><button class="button button-primary" type="button" data-action="sheet-close">Concluir</button></div>'
+        : '<div class="wa"><p class="wa-head">WhatsApp · contato do paciente</p><div class="wa-bubble"><p>Olá! Aqui está o material que conversamos na consulta: <b>' + esc(s.material) + "</b>. Leia com calma e traga suas dúvidas no retorno.</p><p class=\"wa-link\">lilly360.com.br/m/7KQ2</p><p class=\"wa-foot\">Material educacional. Não substitui a consulta.</p></div></div>" +
+          '<div class="stack-actions"><button class="button button-primary" type="button" data-action="whatsapp-enviar">' + icon("send", 18, 2) + "Enviar pelo WhatsApp</button>" +
+          '<div class="row-actions"><button class="text-button" type="button" data-action="material-alt" data-v="Impressão">Imprimir</button><button class="text-button" type="button" data-action="material-alt" data-v="QR">Mostrar QR</button></div></div>';
+    } else if (s.type === "linkedin") {
+      var text = state.postText === null ? defaultPost() : state.postText;
+      title = s.done ? "Publicado" : "Prévia do LinkedIn";
+      body = s.done
+        ? '<p class="done-note">' + icon("check", 20, 2.5) + "Seu post está no LinkedIn.</p>" +
+          (state.flow === 5 && state.goal !== null ? '<p class="sheet-big">' + state.goal + " toques da conclusão até o post</p>" : "") +
+          '<div class="stack-actions"><a class="button button-primary" href="#/inicio" data-action="ver-progresso">Voltar ao início e ver seu progresso</a></div>'
+        : '<div class="li"><div class="li-head"><span class="avatar">PF</span><span><b>Dr. Paulo Ferreira</b><br />Cardiologista</span></div><p class="li-text">' + esc(text).replace(/\n/g, "<br />") + '</p><div class="li-art"><p class="eyebrow">Trilha concluída</p><p class="art-title">Cardiologia - <em>Fundamentos</em></p><p class="art-foot">ID de aprovação PP-BR-0000 (ilustrativo)</p></div></div>' +
+          '<div class="stack-actions"><button class="button button-primary" type="button" data-action="linkedin-confirmar">Confirmar publicação</button></div>';
+    } else if (s.type === "resumo") {
+      title = "Resumo da live";
+      body = '<ul class="rules"><li>As quatro classes da ICFEr devem ser iniciadas cedo, mesmo com doses baixas.</li><li>Altas de creatinina abaixo de 30% não justificam suspender IECA ou BRA.</li><li>iSGLT2 com TFG a partir de 20 a 25 protege rim e coração.</li></ul><div class="stack-actions"><a class="button button-primary" href="#/replay/cardio-2026" data-action="sheet-close">Iniciar replay</a></div>';
+    } else if (s.type === "notificacoes") {
+      title = "Notificações";
+      var items = ['<li><a href="#/licao/ic-fer" data-action="sheet-close">Sua lição desta semana: faltam 4 minutos</a></li>'];
+      if (state.day === "ter" && state.liveMissed) items.unshift('<li><a href="#/replay/cardio-2026" data-action="sheet-close">Replay pronto: Atualização em Cardiologia 2026</a></li>');
+      if (state.day === "ter" && state.eventAttended) items.unshift('<li><a href="#/radar" data-action="sheet-close">Radar atualizado com o congresso de ontem</a></li>');
+      body = '<ul class="link-list notif-list">' + items.join("") + '</ul><p class="fine">No máximo uma mensagem por semana, no seu horário.</p>';
+    }
+    root.innerHTML = '<div class="sheet-backdrop" data-action="sheet-close"></div>' +
+      '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><div class="sheet-head"><h2 class="sheet-title" id="sheet-title">' + title + '</h2><button class="sheet-close" type="button" data-action="sheet-close" aria-label="Fechar">' + icon("close", 20, 2) + "</button></div>" + body + "</div>";
+    var first = root.querySelector(".sheet .button, .sheet a, .sheet .text-button");
+    if (first) first.focus();
+  }
+
+  /* ---------- Bastidores ---------- */
+
+  function profile() {
+    return [
+      ["Identidade", "HCP_ID do login", "Login e CRM"],
+      ["Especialidade", "Cardiologia", "CRM e RQE"],
+      ["Engajamento", "High (framework IBU)", "Comportamento"],
+      ["Momento do paciente", state.triage ? TRIAGE[state.triage].label : "Não informado", "Triagem"],
+      ["Temas em aberto", state.quizWrong ? "Ajuste de dose (quiz)" : "Nenhum", "Quiz"],
+      ["Formato preferido", state.audio ? "Áudio e lições curtas" : "Lições curtas", "Consumo"],
+      ["Eventos", state.eventAttended ? "Congresso de Cardiologia 2026 (QR)" : state.liveSignup ? "Inscrito na live de segunda" : "Nenhum", "Lives e QR"],
+      ["Melhor horário", "Segunda, 7h30", "Aberturas de e-mail"],
+      ["Consentimentos", "E-mail sim · WhatsApp sim", "Central de preferências"]
+    ];
+  }
+
+  function renderBackstage() {
+    var el = $("#backstage");
+    clearTimeout(backstageTimer);
+    el.classList.remove("is-leaving");
+    if (!state.backstage && !el.hidden && !reducedMotion()) {
+      el.classList.add("is-leaving");
+      backstageTimer = setTimeout(function () {
+        el.hidden = true;
+        el.classList.remove("is-leaving");
+      }, 180);
+    } else {
+      el.hidden = !state.backstage;
+    }
+    document.body.classList.toggle("has-backstage", state.backstage);
+    $("#proto-backstage").setAttribute("aria-pressed", String(state.backstage));
+    if (!state.backstage) return;
+    var r = ROUTES[parseRoute().name];
+    var html = '<div class="bs-block"><p class="bs-label">Esta tela</p><p class="bs-title">' + r.titulo + '</p><p class="bs-line"><span>Release</span><b>' + r.release + '</b></p><p class="bs-line"><span>Dado capturado</span><b>' + r.dado + "</b></p></div>";
+    if (state.why && WHY[state.why]) {
+      var w = WHY[state.why]();
+      var it = selection().filter(function (x) { return x.id === state.why; })[0];
+      html += '<div class="bs-block bs-why"><p class="bs-label">Por que vejo isto?</p><p class="bs-title">' + w.titulo + "</p>" +
+        '<p class="bs-reason">"' + w.motivo + '"</p>' +
+        '<p class="bs-line"><span>Regra (R1)</span><b>' + w.regra + "</b></p>" +
+        (it ? '<p class="bs-line"><span>Nota de relevância (R2)</span><b>' + num(it.score.toFixed(2)) + "</b></p>" : "") +
+        '<p class="bs-line"><span>Sinais</span><b>' + w.sinais.map(function (s) { return "<code>" + esc(s) + "</code>"; }).join(" ") + "</b></p>" +
+        '<p class="bs-line"><span>Fonte do dado</span><b>' + w.fonte + '</b></p><p class="bs-line"><span>Consentimento</span><b>' + w.consentimento + "</b></p></div>";
+    }
+    html += '<div class="bs-block"><p class="bs-label">Ficha do Dr. Paulo agora</p><dl class="bs-profile">' + profile().map(function (row) {
+      return "<div><dt>" + row[0] + "</dt><dd>" + row[1] + "<small>" + row[2] + "</small></dd></div>";
+    }).join("") + "</dl></div>";
+    html += '<div class="bs-block"><p class="bs-label">Sinais registrados</p>' + (state.signals.length
+      ? '<ol class="bs-signals">' + state.signals.slice(0, 14).map(function (s) {
+          return "<li><code>" + esc(s.nome) + (s.props ? " " + esc(JSON.stringify(s.props)) : "") + "</code>" + (s.efeito ? "<span>" + esc(s.efeito) + "</span>" : "") + "</li>";
+        }).join("") + "</ol>"
+      : '<p class="bs-empty">Interaja com a tela. Cada ação vira um evento com a identidade do médico, enviado ao Data Lake da Lilly.</p>') + "</div>";
+    $("#backstage-body").innerHTML = html;
+  }
+
+  /* ---------- Barra do protótipo ---------- */
+
+  function hint() {
+    var r = parseRoute().name;
+    var f = state.flow;
+    var ter = state.day === "ter";
+    var toTer = { label: "Avançar para terça", proto: "dia", dia: "ter" };
+    if (!f) return { text: "Navegação livre. Escolha um fluxo para ser guiado passo a passo." };
+    if (f === 1) {
+      if (state.sent) return { text: "Concluído: material enviado ao paciente em " + state.goal + " toques e " + state.goalSecs + " segundos. Meta: 5 toques, 1 minuto." };
+      if (r === "inicio") return { text: "Passo 1: o médico tem uma dúvida na consulta. Toque na busca, no cabeçalho." };
+      if (r === "busca") return { text: 'Passo 2: digite a dúvida ou toque em "Ajuste de dose com creatinina alta".' };
+      if (r === "tema" && !state.triage) return { text: "Passo 3: leia o resumo e escolha a situação que apareceu no consultório." };
+      if (r === "tema") return { text: 'Passo 4: ferramenta e material mudaram com a situação. Toque em "Enviar ao paciente".' };
+      return { text: "Volte à busca para seguir o fluxo.", href: "#/busca", label: "Abrir a busca" };
+    }
+    if (f === 3) {
+      if (state.replaySeen.length === 3) return { text: "Concluído: replay recuperado sem ação extra." };
+      if (state.liveSignup && state.liveReminder && !ter) return { text: "Passo 3: a live foi segunda às 19h e o Dr. Paulo não conseguiu assistir.", action: toTer };
+      if (ter && state.liveMissed && r === "replay") return { text: "Passo 5: assista às 3 lições curtas." };
+      if (ter && state.liveMissed) return { text: 'Passo 4: o replay apareceu sozinho em "Selecionado para a sua prática", sem ação do médico. Toque em "Iniciar replay".' };
+      if (r === "live") return { text: 'Passo 2: toque em "Inscrever" e em "Lembrar no meu horário".' };
+      if (r === "congressos") return { text: 'Passo 1: abra a live "Atualização em Cardiologia 2026".' };
+      return { text: "Abra Congressos no menu.", href: "#/congressos", label: "Abrir Congressos" };
+    }
+    if (f === 4) {
+      if (r === "qr" && state.qrStep === 0) return { text: "Passo 1: no estande, o médico aponta o celular para o QR." };
+      if (r === "qr") return { text: 'Passo 2: o login reconhece o médico pelo CRM. Toque em "Entrar".' };
+      if (state.eventAttended && !ter) return { text: "Conteúdo do evento em " + state.goal + " toques. Passo 3: no dia seguinte, o médico volta ao consultório.", action: toTer };
+      if (ter && !state.radarSeen) return { text: 'Passo 4: abra "Radar de sinais" no menu. Ele mudou com o congresso.' };
+      if (ter && r === "radar") return { text: "Passo 5: volte ao início. A seleção tem o conteúdo do congresso, com o motivo.", href: "#/inicio", label: "Voltar ao início" };
+      if (ter) return { text: "Concluído: do QR ao conteúdo em " + state.goal + " toques, e o congresso virou Radar e recomendação." };
+      return { text: "Abra o QR do estande para começar.", href: "#/qr", label: "Abrir o QR" };
+    }
+    if (f === 5) {
+      if (!state.trailDone) return r === "trilha" ? { text: "Passo 1: as 8 lições estão feitas. Faça o quiz final." } : { text: "Abra a trilha para começar.", href: "#/trilha/cardio-fundamentos", label: "Abrir a trilha" };
+      if (state.posted && r === "inicio") return { text: 'Concluído: post publicado em ' + state.goal + ' toques, ranking subiu 2 posições e os novos selos estão em "Seu progresso".' };
+      if (state.posted) return { text: "Post publicado em " + state.goal + ' toques. Passo 4: volte ao início e veja "Seu progresso".', action: { label: "Ver Seu progresso", proto: "progresso" } };
+      if (r === "conclusao") return { text: 'Passo 2: a contagem de toques começa aqui. Toque em "Compartilhar no LinkedIn".' };
+      if (r === "social") return { text: "Passo 3: o post já vem pronto, com ID de aprovação. Publique." };
+      return { text: "Abra a tela de conclusão.", href: "#/conclusao", label: "Abrir conclusão" };
+    }
+    return { text: "" };
+  }
+
+  function updateProto() {
+    var r = parseRoute().name;
+    $("#proto-flow").value = String(state.flow);
+    document.querySelectorAll('[data-proto="dia"][data-dia]').forEach(function (b) {
+      if (b.closest("#proto-hint")) return;
+      b.setAttribute("aria-pressed", String(b.dataset.dia === state.day));
+    });
+    var h = hint();
+    var actionHtml = "";
+    if (h.action) actionHtml = '<button class="proto-cta" type="button" data-proto="' + h.action.proto + '"' + (h.action.dia ? ' data-dia="' + h.action.dia + '"' : "") + ">" + h.action.label + "</button>";
+    else if (h.href) actionHtml = '<a class="proto-cta" href="' + h.href + '">' + h.label + "</a>";
+    $("#proto-hint").innerHTML = "<span>" + esc(h.text) + "</span>" + actionHtml;
+
+    var t = $("#proto-touches");
+    var f = state.flow;
+    if (!f) {
+      t.hidden = true;
+    } else {
+      t.hidden = false;
+      var meta = FLOWS[f].meta;
+      if (f === 3) t.textContent = state.liveMissed ? "Ações extras: 0 · meta 0" : "Meta: nenhuma ação extra";
+      else if (state.goal !== null) t.textContent = state.goal + " toques · meta " + meta + (state.goal <= meta ? " · dentro" : " · acima");
+      else if (state.counting) t.textContent = state.touches + " toques · meta " + meta;
+      else t.textContent = "Meta: " + meta + " toques";
+      if (state.counting && lastTouches !== null && state.touches > lastTouches && !reducedMotion()) {
+        t.classList.remove("is-bump");
+        void t.offsetWidth;
+        t.classList.add("is-bump");
+      }
+      lastTouches = state.touches;
+      t.classList.toggle("is-ok", state.goal !== null && state.goal <= meta);
+      t.classList.toggle("is-over", (state.goal !== null && state.goal > meta) || (state.counting && state.goal === null && state.touches > meta));
+    }
+    $("#proto-release").textContent = "Esta tela: " + ROUTES[r].release;
+  }
+
+  /* ---------- Movimento ---------- */
+
+  var STAGGER = ".cards, .radar-cards, .events, .trail-list, .slides, .badges, .kit-list, .options, .unlocked-list";
+  var APPEAR = ".feedback, .unlocked, .badge-earned, .done-note, .tag, .option.is-right, .option.is-wrong, .request-list li";
+
+  function reducedMotion() {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function appearKey(el) {
+    return el.className.replace(/\bis-new\b/g, "").trim() + "|" + el.textContent;
+  }
+
+  function appearKeys(root) {
+    var keys = {};
+    root.querySelectorAll(APPEAR).forEach(function (el) {
+      keys[appearKey(el)] = true;
+    });
+    return keys;
+  }
+
+  function markNew(root, seen) {
+    if (reducedMotion()) return;
+    root.querySelectorAll(APPEAR).forEach(function (el) {
+      if (!seen[appearKey(el)]) el.classList.add("is-new");
+    });
+  }
+
+  function animateEntrance(app) {
+    if (revealObserver) revealObserver.disconnect();
+    if (reducedMotion()) return;
+    app.querySelectorAll(STAGGER).forEach(function (list) {
+      Array.prototype.forEach.call(list.children, function (el, i) {
+        el.setAttribute("data-stagger", "");
+        el.style.setProperty("--i", Math.min(i, 6));
+      });
+    });
+    if (!("IntersectionObserver" in window)) return;
+    requestAnimationFrame(function () {
+      var below = Array.prototype.filter.call(app.children, function (el) {
+        return el.getBoundingClientRect().top > window.innerHeight * 0.9;
+      });
+      if (!below.length) return;
+      revealObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-in");
+          revealObserver.unobserve(entry.target);
+        });
+      }, { rootMargin: "0px 0px -12% 0px" });
+      below.forEach(function (el) {
+        el.classList.add("reveal");
+        revealObserver.observe(el);
+      });
+    });
+  }
+
+  /* ---------- Render ---------- */
+
+  function render() {
+    var route = parseRoute();
+    var changed = lastRoute !== location.hash;
+    lastRoute = location.hash;
+    var app = $("#app");
+    var seen = changed ? null : appearKeys(app);
+    app.innerHTML = (VIEWS[route.name] || VIEWS.inicio)(route.param);
+    app.classList.toggle("is-entering", changed);
+    if (changed) animateEntrance(app);
+    else markNew(app, seen);
+    document.title = ROUTES[route.name].titulo + " — Lilly 360";
+
+    var navKey = ROUTES[route.name].nav;
+    document.querySelectorAll("[data-nav]").forEach(function (a) {
+      if (a.dataset.nav === navKey) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    if (changed) moveIndicator(null, false);
+
+    renderSheet();
+    renderBackstage();
+    updateProto();
+    save();
+
+    if (changed) {
+      if (state.scrollTo) {
+        var target = document.getElementById(state.scrollTo);
+        state.scrollTo = null;
+        if (target) {
+          target.scrollIntoView();
+          return;
+        }
+      }
+      window.scrollTo(0, 0);
+      if (!state.sheet) {
+        var h = app.querySelector("[data-focus]");
+        if (h) h.focus({ preventScroll: true });
+      }
+      if (route.name === "busca") {
+        var input = $("#busca-input");
+        if (input) input.focus();
+      }
+    }
+  }
+
+  /* ---------- Ações ---------- */
+
+  var ACTIONS = {
+    notificacoes: function () {
+      state.sheet = { type: "notificacoes" };
+    },
+    sheet: function (el) {
+      state.sheet = { type: el.dataset.sheet, material: el.dataset.material || "" };
+      if (el.dataset.sheet === "linkedin") {
+        var ta = $("#post-text");
+        if (ta) state.postText = ta.value;
+      }
+    },
+    "sheet-close": function () {
+      state.sheet = null;
+    },
+    why: function (el) {
+      state.why = el.dataset.item;
+      state.backstage = true;
+      sig("por_que_vejo_isto", { item: el.dataset.item }, "Transparência: o médico vê o motivo e pode ajustar as preferências.");
+    },
+    "busca-sugestao": function (el) {
+      state.query = el.dataset.q;
+      sig("busca_realizada", { termos: el.dataset.q }, "Termos sem dado pessoal: temas de interesse e lacunas do acervo.");
+      if (el.tagName === "BUTTON") {
+        $("#busca-resultados").innerHTML = searchResults();
+        var input = $("#busca-input");
+        if (input) input.value = state.query;
+        save();
+        updateProto();
+        return false;
+      }
+    },
+    triagem: function (el) {
+      state.triage = el.dataset.k;
+      sig("triagem_respondida", { especialidade: "cardiologia", situacao: TRIAGE[state.triage].label, momento: TRIAGE[state.triage].momento }, "Momento do paciente no perfil: ferramenta, material e seleção mudam.");
+      state.scrollAfter = "kit-result";
+    },
+    "calc-tfg": function () {
+      var cr = parseFloat($("#tfg-cr").value);
+      var age = parseFloat($("#tfg-idade").value);
+      var fem = $("#tfg-sexo").value === "f";
+      var out = $("#tfg-out");
+      if (!(cr > 0 && age >= 18)) {
+        out.innerHTML = "<p>Informe creatinina e idade válidas.</p>";
+        return false;
+      }
+      var k = fem ? 0.7 : 0.9;
+      var a = fem ? -0.241 : -0.302;
+      var tfg = 142 * Math.pow(Math.min(cr / k, 1), a) * Math.pow(Math.max(cr / k, 1), -1.2) * Math.pow(0.9938, age) * (fem ? 1.012 : 1);
+      tfg = Math.round(tfg);
+      var est = tfg >= 90 ? "G1" : tfg >= 60 ? "G2" : tfg >= 45 ? "G3a" : tfg >= 30 ? "G3b" : tfg >= 15 ? "G4" : "G5";
+      out.innerHTML = '<p class="calc-big">' + tfg + ' <span>mL/min/1,73 m²</span></p><p>Categoria ' + est + ". " + (tfg < 45 ? "Reavalie creatinina e potássio em 1 a 2 semanas depois de cada ajuste." : "Mantenha o controle habitual.") + "</p>";
+      sig("ferramenta_usada", { ferramenta: "tfg_ckd_epi" }, "Uso do kit reordena as ferramentas. Os valores digitados não são guardados.");
+      renderBackstage();
+      save();
+      return false;
+    },
+    "whatsapp-enviar": function () {
+      var flowSend = state.flow === 1 && parseRoute().name === "tema";
+      if (flowSend) reachGoal();
+      state.sent = state.sent || parseRoute().name === "tema";
+      sig("material_enviado", { material: state.sheet.material, canal: "whatsapp" }, "Uso clínico e afinidade de tema. Material relacionado sobe no kit.");
+      state.sheet = { type: "whatsapp", material: state.sheet.material, done: true };
+    },
+    "material-alt": function (el) {
+      sig("material_enviado", { material: state.sheet.material, canal: el.dataset.v.toLowerCase() });
+      toast(el.dataset.v === "QR" ? "QR pronto para o paciente escanear" : "Material pronto para imprimir");
+      state.sheet = null;
+    },
+    "licao-play": function () {
+      state.lessonPlayed = true;
+      sig("video_progresso", { peca: "licao_6", segundo: 960, abandono: false }, "Cada segundo vira dado: mapa de calor por trecho.");
+    },
+    "licao-concluir": function () {
+      state.lessonPlayed = true;
+      sig("video_progresso", { peca: "licao_6", segundo: 960, abandono: false });
+    },
+    "quiz-answer": function (el) {
+      var key = el.dataset.quiz;
+      var st = state.quiz[key];
+      var it = QUIZ[key][st.i];
+      var i = +el.dataset.i;
+      var ok = i === it.a;
+      st.answers[st.i] = { choice: i, ok: ok };
+      sig("quiz_respondido", { tema: it.tema, acerto: ok }, ok ? null : "Tema em aberto: o caso clínico e a lição de reforço do tema entram na próxima seleção.");
+    },
+    "quiz-next": function (el) {
+      var key = el.dataset.quiz;
+      var st = state.quiz[key];
+      st.i++;
+      if (st.i >= QUIZ[key].length) {
+        if (key === "licao") {
+          state.lessonDone = true;
+          state.quizWrong = !st.answers[0].ok;
+          sig("licao_concluida", { trilha: "cardiologia_avancada", licao: 6 }, state.quizWrong ? "Regra: erro em ajuste de dose põe o caso do tema no topo da seleção de amanhã." : "Próxima lição liberada.");
+        } else {
+          state.trailDone = true;
+          sig("trilha_concluida", { trilha: "cardiologia_fundamentos" }, "Certificado e selo liberados. Ranking recalculado.");
+          if (state.flow === 5) {
+            state.touches = 0;
+            state.counting = true;
+            state.t0 = Date.now();
+          }
+          go("#/conclusao");
+          return false;
+        }
+      }
+    },
+    "final-iniciar": function () {
+      state.finalStarted = true;
+    },
+    "caso-escolha": function (el) {
+      state.caseChoice = +el.dataset.i;
+    },
+    "caso-decidir": function () {
+      if (state.caseChoice === null) return false;
+      var it = CASO[state.caseStep];
+      var ok = state.caseChoice === it.a;
+      state.caseAnswers[state.caseStep] = { choice: state.caseChoice, ok: ok };
+      sig("caso_decisao", { caso: "rim_coracao", etapa: state.caseStep + 1, correta: ok }, ok ? "Mostra como o médico decide: insumo para a pauta médica." : "Ponto de erro vira lição de reforço.");
+    },
+    "caso-proxima": function () {
+      state.caseChoice = null;
+      if (state.caseStep < CASO.length - 1) state.caseStep++;
+      else {
+        state.caseDone = true;
+        sig("caso_concluido", { caso: "rim_coracao" }, "Casos resolvidos sobem no progresso.");
+      }
+    },
+    "ouvir-licao": function () {
+      state.audio = !state.audio;
+      if (state.audio) {
+        sig("audio_play", { peca: "licao_6" }, "Afinidade de formato: áudio ganha peso no perfil. Modo áudio entra no R3.");
+        toast("Tocando a lição em áudio");
+      }
+    },
+    "ouvir-atualizacao": function () {
+      state.audio = true;
+      sig("audio_play", { peca: "atualizacao_congresso" }, "Afinidade de formato: áudio.");
+      toast("Tocando a atualização, 2 min");
+    },
+    "live-inscrever": function () {
+      state.liveSignup = !state.liveSignup;
+      if (state.liveSignup) sig("live_inscricao", { evento: "cardio_2026" }, "Se não assistir, recebe o replay em 3 lições, não um novo convite.");
+    },
+    "live-lembrar": function () {
+      state.liveReminderOpen = !state.liveReminderOpen;
+    },
+    "live-lembrete": function (el) {
+      state.liveReminder = el.dataset.v;
+      state.liveReminderOpen = false;
+      sig("lembrete_agendado", { evento: "cardio_2026", quando: el.dataset.v }, "Melhor horário aprendido para o próximo lembrete.");
+    },
+    "inscrever-proxima": function () {
+      state.nextLiveSignup = !state.nextLiveSignup;
+      if (state.nextLiveSignup) sig("live_inscricao", { evento: "caso_a_caso_ic" });
+    },
+    "replay-ver": function (el) {
+      var i = +el.dataset.i;
+      if (state.replaySeen.indexOf(i) === -1) {
+        state.replaySeen.push(i);
+        sig("replay_licao", { evento: "cardio_2026", licao: i + 1 }, "Lição do replay conta para a trilha e para as horas de EMC.");
+        toast("Lição " + (i + 1) + " assistida");
+      }
+    },
+    "qr-escanear": function () {
+      state.qrStep = 1;
+      sig("qr_lido", { evento: "congresso_cardio_2026", local: "estande" }, "Porta de entrada: QR do evento.");
+    },
+    "qr-entrar": function () {
+      state.eventAttended = true;
+      if (state.flow === 4) reachGoal();
+      sig("login", { metodo: "crm", origem: "qr" }, "Médico identificado: o conteúdo do evento entra na ficha e muda o Radar de amanhã.");
+      go("#/evento/cardio-2026");
+      return false;
+    },
+    "evento-abrir": function (el) {
+      sig("evento_item_aberto", { item: el.dataset.v });
+      toast("Abrindo: " + el.dataset.v);
+    },
+    "salvar-kit": function () {
+      state.savedKit = true;
+      sig("item_salvo", { item: "material_kol" }, "Item salvo aparece no topo do kit.");
+    },
+    compartilhar: function () {
+      sig("certificado_compartilhar", { canal: "linkedin" });
+    },
+    "baixar-certificado": function () {
+      sig("certificado_baixado", { trilha: "cardiologia_fundamentos" });
+      toast("Certificado baixado");
+      return false;
+    },
+    "post-formato": function (el) {
+      var ta = $("#post-text");
+      if (ta) state.postText = ta.value;
+      state.postFormat = el.dataset.v;
+    },
+    "linkedin-confirmar": function () {
+      state.posted = true;
+      if (state.flow === 5) reachGoal();
+      sig("social_export", { peca: "certificado_fundamentos", formato: state.postFormat, canal: "linkedin", id_aprovacao: "PP-BR-0000" }, "Peça com ID de aprovação. Sinal de pares por especialidade.");
+      state.sheet = { type: "linkedin", done: true };
+    },
+    "ir-secao": function (el) {
+      state.scrollTo = el.dataset.v;
+    },
+    "ver-progresso": function () {
+      state.sheet = null;
+      state.scrollTo = "secao-progresso";
+    },
+    "selo-linkedin": function (el) {
+      sig("selo_exportado", { selo: el.dataset.v, canal: "linkedin" });
+      toast("Selo verificável pronto para o LinkedIn");
+      return false;
+    },
+    "ler-doc": function (el) {
+      sig("leitura_pagina", { estudo: el.dataset.v, acao: el.dataset.download ? "baixar" : "ler" }, "Profundidade de leitura por tema.");
+      toast(el.dataset.download ? "Download iniciado" : "Abrindo no leitor do acervo");
+      renderBackstage();
+      save();
+      return false;
+    },
+    contato: function (el) {
+      var codigo = "L360-" + (4810 + state.contacts.length * 7);
+      state.contacts.unshift({ canal: el.dataset.v, codigo: codigo });
+      sig("contato_solicitado", { canal: el.dataset.v, protocolo: codigo });
+      toast("Pedido enviado: " + el.dataset.v + ", protocolo " + codigo);
+    }
+  };
+
+  function setDay(d) {
+    if (state.day === d) return;
+    state.day = d;
+    if (d === "ter") {
+      if (state.liveSignup && !state.liveMissed) {
+        state.liveMissed = true;
+        sig("live_presenca", { evento: "cardio_2026", presente: false }, "Replay em 3 lições na home.");
+      }
+      if (state.quizWrong) sig("selecao_recalculada", { motivo: "tema_em_aberto", tema: "ajuste_de_dose" }, "O caso do tema sobe para o topo da seleção.");
+      if (state.eventAttended) sig("radar_atualizado", { origem: "congresso_cardio_2026" }, "Radar e seleção personalizados com o evento.");
+    }
+    state.sheet = null;
+    go("#/inicio");
+  }
+
+  function startFlow(n) {
+    var keepBackstage = state.backstage;
+    state = initialState();
+    state.backstage = keepBackstage;
+    state.flow = n;
+    state.counting = n === 1 || n === 2 || n === 4;
+    state.t0 = Date.now();
+    if (n) sig("fluxo_iniciado", { fluxo: n, nome: FLOWS[n].nome });
+    go(n ? FLOWS[n].inicio : "#/inicio");
+  }
+
+  var PROTO = {
+    dia: function (el) {
+      setDay(el.dataset.dia);
+    },
+    bastidores: function () {
+      state.backstage = !state.backstage;
+      if (!state.backstage) state.why = null;
+      renderBackstage();
+      save();
+    },
+    reiniciar: function () {
+      startFlow(state.flow);
+    },
+    progresso: function () {
+      state.scrollTo = "secao-progresso";
+      if (parseRoute().name === "inicio") {
+        var t = document.getElementById("secao-progresso");
+        if (t) t.scrollIntoView();
+        state.scrollTo = null;
+        updateProto();
+      } else {
+        go("#/inicio");
+      }
+    }
+  };
+
+  document.addEventListener("click", function (e) {
+    var proto = e.target.closest("[data-proto]");
+    if (proto) {
+      PROTO[proto.dataset.proto](proto);
+      return;
+    }
+
+    var inProduct = e.target.closest("#app, .site-header, #sheet-root");
+    var interactive = e.target.closest("a, button, summary, select");
+    if (inProduct && interactive && !interactive.disabled && state.counting && state.goal === null && !e.target.closest(".sheet-backdrop")) {
+      state.touches++;
+    }
+
+    var el = e.target.closest("[data-action]");
+    if (!el) {
+      if (interactive && inProduct) updateProto();
+      return;
+    }
+    var fn = ACTIONS[el.dataset.action];
+    if (!fn) return;
+    var result = fn(el);
+    if (result === false) {
+      updateProto();
+      return;
+    }
+    if (el.tagName === "A" && el.getAttribute("href") && el.getAttribute("href") !== location.hash) {
+      save();
+      return;
+    }
+    render();
+    if (state.scrollAfter) {
+      var t = document.getElementById(state.scrollAfter);
+      state.scrollAfter = null;
+      if (t) t.scrollIntoView({ block: "nearest" });
+    }
+  });
+
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "busca-input") {
+      state.query = e.target.value;
+      $("#busca-resultados").innerHTML = searchResults();
+      save();
+    } else if (e.target.id === "post-text") {
+      state.postText = e.target.value;
+      save();
+    }
+  });
+
+  document.addEventListener("submit", function (e) {
+    if (e.target.dataset.form === "busca") {
+      e.preventDefault();
+      var q = state.query.trim();
+      if (!q) return;
+      if (state.counting && state.goal === null) state.touches++;
+      sig("busca_realizada", { termos: q }, "Busca só no acervo aprovado. Nenhuma resposta gerada por IA.");
+      var first = document.querySelector("#busca-resultados .result");
+      if (first) go(first.getAttribute("href"));
+      else render();
+    }
+  });
+
+  $("#proto-flow").addEventListener("change", function (e) {
+    startFlow(+e.target.value);
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (state.sheet) {
+      state.sheet = null;
+      render();
+      return;
+    }
+    var menu = $(".menu");
+    if (menu && menu.open) menu.open = false;
+  });
+
+  window.addEventListener("hashchange", function () {
+    var menu = $(".menu");
+    if (menu) menu.open = false;
+    var r = parseRoute().name;
+    if (r === "radar" && state.day === "ter" && state.eventAttended && !state.radarSeen) {
+      state.radarSeen = true;
+      sig("radar_aberto", { personalizado: true });
+    }
+    if (r === "conclusao" && state.flow === 5 && state.trailDone && !state.counting) {
+      state.touches = 0;
+      state.counting = true;
+      state.t0 = Date.now();
+    }
+    render();
+  });
+
+  var nav = $(".nav-inline");
+  nav.addEventListener("mouseover", function (event) {
+    var link = event.target.closest(".nav-link");
+    if (link) moveIndicator(link, false);
+  });
+  nav.addEventListener("focusin", function (event) {
+    var link = event.target.closest(".nav-link");
+    if (link) moveIndicator(link, false);
+  });
+  nav.addEventListener("mouseleave", function () {
+    moveIndicator(null, false);
+  });
+  nav.addEventListener("focusout", function (event) {
+    if (!nav.contains(event.relatedTarget)) moveIndicator(null, false);
+  });
+  window.addEventListener("resize", function () {
+    moveIndicator(null, true);
+  });
+
+  if (!location.hash) history.replaceState(null, "", "#/inicio");
+  render();
+  moveIndicator(null, true);
+  if (document.fonts) document.fonts.ready.then(function () { moveIndicator(null, true); });
+})();
