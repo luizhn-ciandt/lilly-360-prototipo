@@ -30,7 +30,9 @@
     pacientes: { titulo: "Kit: ferramentas e materiais", release: "R1", dado: "Ferramenta usada e material enviado", nav: "pacientes" },
     protocolos: { titulo: "Acervo", release: "R1", dado: "Página e profundidade de leitura", nav: "protocolos" },
     parceiros: { titulo: "Parceiros", release: "Evolução na F4", dado: "Cliques em conteúdo patrocinado", nav: "" },
-    equipe: { titulo: "Falar com a equipe", release: "R3", dado: "Pedidos de contato", nav: "" }
+    equipe: { titulo: "Falar com a equipe", release: "R3", dado: "Pedidos de contato", nav: "" },
+    chatgpt: { titulo: "ChatGPT", release: "Fora da plataforma", dado: "Nenhum: a pesquisa acontece fora do Lilly 360", nav: "", publico: true },
+    artigo: { titulo: "Artigo aberto", release: "A definir", dado: "Visita anônima: origem do link e leitura, sem dado pessoal", nav: "", publico: true }
   };
 
   function initialState() {
@@ -70,6 +72,9 @@
       sheet: null,
       backstage: false,
       primeiroAcesso: false,
+      externo: false,
+      deslogado: false,
+      gpt: 0,
       why: null,
       audio: false,
       savedKit: false,
@@ -93,6 +98,7 @@
         var saved = Object.assign(initialState(), JSON.parse(raw));
         if (!FLOWS[saved.flow] || FLOWS[saved.flow].oculto) saved.flow = 0;
         saved.chat = saved.chat.map(function (t) { return { q: t.q }; });
+        if (saved.gpt === 1) saved.gpt = 2;
         return saved;
       }
     } catch (e) {}
@@ -470,7 +476,7 @@
   }
 
   function page(opts, body) {
-    return '<section class="page' + (opts.narrow ? " page-narrow" : "") + '"><div class="container">' +
+    return '<section class="page' + (opts.narrow ? " page-narrow" : "") + (opts.className ? " " + opts.className : "") + '"><div class="container">' +
       (opts.back !== false ? '<a class="back-link" href="' + (opts.back || "#/inicio") + '"' + (opts.backTo ? ' data-action="ir-secao" data-v="' + opts.backTo + '"' : "") + ">" + icon("back", 18, 2) + (opts.backLabel || "Início") + "</a>" : "") +
       (opts.eyebrow ? '<p class="eyebrow page-eyebrow">' + opts.eyebrow + "</p>" : "") +
       '<div class="page-head' + (opts.intro ? " has-intro" : "") + '">' +
@@ -757,6 +763,135 @@
       return '<li><a class="result" href="' + it.href + '"><span class="result-type">' + it.tipo + '</span><span class="result-title">' + it.t + "</span>" + icon("chevron", 20, 2) + "</a></li>";
     }).join("") + "</ul>";
   }
+
+  /* ---------- Cenário externo: ChatGPT e artigo aberto ---------- */
+
+  var GPT_Q = "Paciente de 54 anos com ICFEr e DRC 3b. A creatinina subiu 17% depois que aumentei o enalapril. Preciso suspender?";
+  var ARTIGO_TITULO = "Creatinina subiu depois do IECA: quando manter a dose";
+
+  var GPT_ICONS = {
+    sidebar: '<rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" />',
+    edit: '<path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />',
+    search: '<circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />',
+    library: '<rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" />',
+    chevdown: '<path d="m6 9 6 6 6-6" />',
+    share: '<path d="M12 3v12" /><path d="m7 8 5-5 5 5" /><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" />',
+    dots: '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />',
+    plus: '<path d="M12 5v14M5 12h14" />',
+    globe: '<circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />',
+    up: '<path d="M12 19V5M5 12l7-7 7 7" />',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />',
+    like: '<path d="M7 10v11H4V10zM7 10l4-7a2 2 0 0 1 3 2l-1 5h6a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 17.6 21H7" />',
+    dislike: '<g transform="rotate(180 12 12)"><path d="M7 10v11H4V10zM7 10l4-7a2 2 0 0 1 3 2l-1 5h6a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 17.6 21H7" /></g>',
+    speaker: '<path d="M11 5 6 9H3v6h3l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />',
+    regen: '<path d="M3 12a9 9 0 0 1 15.5-6.3L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16" /><path d="M3 21v-5h5" />'
+  };
+
+  function gi(name, size) {
+    size = size || 20;
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + GPT_ICONS[name] + "</svg>";
+  }
+
+  function gptFav(tipo) {
+    var letra = { lilly: "L", kdigo: "K", sbc: "S" }[tipo];
+    return '<span class="gpt-fav gpt-fav--' + tipo + '" aria-hidden="true">' + letra + "</span>";
+  }
+
+  function gptCiteLilly() {
+    return '<a class="gpt-cite gpt-cite--lilly" href="#/artigo" data-action="gpt-abrir" aria-label="Fonte: Lilly 360, ' + ARTIGO_TITULO + '">Lilly 360' +
+      '<span class="gpt-pop" aria-hidden="true"><span class="gpt-pop-site">' + gptFav("lilly") + "lilly360.com.br</span>" +
+      '<span class="gpt-pop-title">' + ARTIGO_TITULO + "</span>" +
+      '<span class="gpt-pop-text">Uma alta de até 30% nas primeiras semanas depois de iniciar ou aumentar IECA ou BRA é esperada.</span></span></a>';
+  }
+
+  function gptCite(nome) {
+    return '<button class="gpt-cite" type="button" data-action="gpt-fora">' + nome + "</button>";
+  }
+
+  function gptComposer(cheio) {
+    return '<form class="gpt-composer" data-form="gpt">' +
+      '<label class="visually-hidden" for="gpt-input">Mensagem para o ChatGPT</label>' +
+      '<textarea id="gpt-input" rows="1" placeholder="Pergunte alguma coisa">' + (cheio ? GPT_Q : "") + "</textarea>" +
+      '<div class="gpt-composer-row">' +
+      '<span class="gpt-ico gpt-ico--sm" aria-hidden="true">' + gi("plus", 20) + "</span>" +
+      '<span class="gpt-tool" aria-hidden="true">' + gi("globe", 18) + "Buscar</span>" +
+      '<span class="gpt-spacer"></span>' +
+      '<span class="gpt-ico gpt-ico--sm" aria-hidden="true">' + gi("mic", 20) + "</span>" +
+      '<button class="gpt-send" type="submit" aria-label="Enviar mensagem"' + (cheio ? "" : " disabled") + ">" + gi("up", 20) + "</button></div></form>";
+  }
+
+  function gptAnswer() {
+    return '<div class="gpt-answer">' +
+      '<p class="gpt-searched">' + gi("globe", 16) + "Pesquisou 4 sites</p>" +
+      "<p>Na maioria dos casos, <strong>não é preciso suspender o enalapril</strong>. Uma alta de até 30% na creatinina nas primeiras semanas depois de iniciar ou aumentar um IECA é esperada e, em geral, não indica lesão renal. " + gptCiteLilly() + "</p>" +
+      "<h3>O que fazer agora</h3>" +
+      "<ul><li>A alta de 17% está abaixo do limite de 30%: a dose pode ser mantida.</li>" +
+      "<li>Repita creatinina e potássio em 1 a 2 semanas. " + gptCite("KDIGO") + "</li></ul>" +
+      "<h3>Quando reduzir a dose</h3>" +
+      "<ul><li>Se a alta passar de 30%, ou o potássio passar de 5,5 mmol/L.</li>" +
+      "<li>Nesse caso, procure outras causas: desidratação, anti-inflamatório ou estenose de artéria renal. " + gptCite("SBC") + "</li></ul>" +
+      "<p>O Lilly 360 tem uma página sobre esse cenário, revisada pela área médica, com orientação por situação do paciente. " + gptCiteLilly() + "</p>" +
+      '<div class="gpt-actions" aria-hidden="true">' +
+      ["copy", "like", "dislike", "speaker", "share", "regen"].map(function (n) {
+        return '<span class="gpt-ico gpt-ico--xs">' + gi(n, 18) + "</span>";
+      }).join("") +
+      '<span class="gpt-sources">' + gptFav("lilly") + gptFav("kdigo") + gptFav("sbc") + "Fontes</span></div></div>";
+  }
+
+  VIEWS.chatgpt = function () {
+    var enviado = state.gpt > 0;
+    var chats = ["Resumo do ESC 2021 para residentes", "Dose de espironolactona na DRC", "Plano de aula: insuficiência cardíaca", "Interação entre amiodarona e varfarina"];
+    var side = '<aside class="gpt-side" aria-hidden="true" inert>' +
+      '<div class="gpt-side-top"><span class="gpt-ico">' + gi("sidebar") + '</span><span class="gpt-ico">' + gi("edit") + "</span></div>" +
+      '<div class="gpt-side-nav"><span class="gpt-side-item">' + gi("edit", 18) + 'Novo chat</span><span class="gpt-side-item">' + gi("search", 18) + 'Buscar em chats</span><span class="gpt-side-item">' + gi("library", 18) + "Biblioteca</span></div>" +
+      '<p class="gpt-side-label">Chats</p><div class="gpt-chats">' +
+      (enviado ? '<span class="gpt-side-item is-active">Creatinina após aumentar enalapril</span>' : "") +
+      chats.map(function (c) { return '<span class="gpt-side-item">' + c + "</span>"; }).join("") + "</div>" +
+      '<div class="gpt-user"><span class="gpt-avatar">PF</span><span class="gpt-user-name">Paulo Ferreira<small>Plus</small></span></div></aside>';
+
+    var top = '<header class="gpt-top"><span class="gpt-model" aria-hidden="true">ChatGPT' + gi("chevdown", 16) + "</span>" +
+      (enviado ? '<span class="gpt-top-right" aria-hidden="true"><span class="gpt-share">' + gi("share", 18) + 'Compartilhar</span><span class="gpt-ico">' + gi("dots") + "</span></span>" : "") + "</header>";
+
+    var main;
+    if (!enviado) {
+      main = '<div class="gpt-home"><h1 class="gpt-hello" tabindex="-1" data-focus>Por onde começamos?</h1>' + gptComposer(true) + "</div>";
+    } else {
+      main = '<div class="gpt-scroll"><div class="gpt-col gpt-thread"><h1 class="visually-hidden" tabindex="-1" data-focus>Conversa no ChatGPT</h1>' +
+        '<div class="gpt-user-msg"><p>' + GPT_Q + "</p></div>" +
+        (state.gpt === 1 ? '<p class="gpt-thinking" role="status">Pesquisando na web</p>' : gptAnswer()) +
+        '</div></div><div class="gpt-dock"><div class="gpt-col">' + gptComposer(false) +
+        '<p class="gpt-disclaimer">O ChatGPT pode cometer erros. Considere verificar informações importantes.</p></div></div>';
+    }
+    return '<div class="gpt' + (enviado ? " is-chat" : "") + '">' + side + '<section class="gpt-main" aria-label="ChatGPT">' + top + main + "</section></div>";
+  };
+
+  VIEWS.artigo = function () {
+    var travados = [
+      ["Triagem por situação", "Em tratamento, com dose recém-ajustada ou com piora: a orientação muda com o paciente."],
+      ["TFG CKD-EPI 2021", "A calculadora abre na própria página, com o resultado pronto para a decisão."],
+      ["Material para o paciente", "Uma página em linguagem simples, para enviar pelo WhatsApp, imprimir ou mostrar o QR."]
+    ];
+    var body = '<p class="artigo-meta">Revisado pela área médica da Lilly · setembro de 2026 · 4 min de leitura</p>' +
+      '<p class="artigo-lead">A creatinina costuma subir logo depois de iniciar ou aumentar um IECA ou BRA. Na maior parte dos casos, a alta é esperada e o remédio deve continuar. Veja quando manter, quando reduzir e o que investigar.</p>' +
+      '<div class="edu"><div class="edu-main"><ul class="key-points">' +
+      "<li>Uma alta da creatinina de até 30% nas primeiras semanas depois de iniciar ou aumentar IECA ou BRA é esperada e, em geral, não exige suspender o remédio.</li>" +
+      "<li>Reavalie creatinina e potássio em 1 a 2 semanas depois de cada ajuste.</li>" +
+      "<li>Acima de 30%, ou com potássio acima de 5,5 mmol/L, reduza a dose e procure outras causas: desidratação, anti-inflamatório, estenose de artéria renal.</li>" +
+      '</ul><p class="edu-ref">Referências: KDIGO 2024 Clinical Practice Guideline for CKD; Diretriz Brasileira de Insuficiência Cardíaca. Revisado em setembro de 2026.</p></div></div>' +
+
+      '<section class="artigo-gate" aria-labelledby="artigo-gate-titulo">' +
+      '<div class="artigo-gate-head"><p class="eyebrow">Com login no Lilly 360</p>' +
+      '<h2 class="display section-title" id="artigo-gate-titulo">Leve este caso para o <em>seu consultório</em>.</h2></div>' +
+      '<ul class="artigo-locked">' + travados.map(function (t) {
+        return '<li class="artigo-locked-item"><span class="artigo-lock" aria-hidden="true">' + icon("lock", 18, 1.75) + '</span><span class="artigo-locked-title">' + t[0] + '</span><span class="artigo-locked-text">' + t[1] + "</span></li>";
+      }).join("") + "</ul>" +
+      '<div class="artigo-gate-cta"><button class="button button-primary" type="button" data-action="login-abrir">Entrar com CRM</button>' +
+      '<p class="fine">Acesso exclusivo para profissionais de saúde.</p></div></section>' +
+
+      '<p class="legal">Conteúdo ilustrativo, sujeito a MLR. Material educacional destinado a profissionais de saúde. Nesta versão aberta, nada sobre você é usado para personalizar a página.</p>';
+    return page({ narrow: true, back: false, className: "artigo", eyebrow: "Cardiologia · Nefrologia", title: "Creatinina subiu depois do IECA: quando <em>manter a dose</em>" }, body);
+  };
 
   VIEWS.tema = function () {
     var t = state.triage ? TRIAGE[state.triage] : null;
@@ -1355,6 +1490,15 @@
           '<div class="wa"><p class="wa-head" id="wa-head">WhatsApp · ' + (foneValido(waFone) ? "+55 " + foneFormatado(waFone) : "contato do paciente") + '</p><div class="wa-bubble"><p>Olá! Aqui está o material que conversamos na consulta: <b>' + esc(s.material) + "</b>. Leia com calma e traga suas dúvidas no retorno.</p><p class=\"wa-link\">lilly360.com.br/m/7KQ2</p><p class=\"wa-foot\">Material educacional. Não substitui a consulta.</p></div></div>" +
           '<div class="stack-actions"><button class="button button-primary" type="button" data-action="whatsapp-enviar"' + (foneValido(waFone) ? "" : " disabled") + ">" + icon("send", 18, 2) + "Enviar pelo WhatsApp</button>" +
           '<div class="row-actions"><button class="text-button" type="button" data-action="material-alt" data-v="Impressão">Imprimir</button><button class="text-button" type="button" data-action="material-alt" data-v="QR">Mostrar QR</button></div></div>';
+    } else if (s.type === "login") {
+      title = "Entrar no Lilly 360";
+      body = '<form class="login" data-form="login">' +
+        '<p class="panel-body">Use seu CRM. Depois de entrar, você volta a este tema com triagem, ferramentas e material para o paciente.</p>' +
+        '<div class="login-row"><div class="field"><label for="login-crm">CRM</label><input id="login-crm" type="text" inputmode="numeric" autocomplete="off" value="123456" data-autofocus /></div>' +
+        '<div class="field"><label for="login-uf">UF</label><select id="login-uf">' + ["SP", "RJ", "MG", "RS", "PR", "BA"].map(function (uf) { return "<option>" + uf + "</option>"; }).join("") + "</select></div></div>" +
+        '<div class="field"><label for="login-senha">Senha</label><input id="login-senha" type="password" autocomplete="off" value="lilly360demo" /></div>' +
+        '<button class="button button-primary login-submit" type="submit">Entrar</button>' +
+        '<p class="fine">Protótipo: os campos já vêm preenchidos e nada é enviado.</p></form>';
     } else if (s.type === "linkedin") {
       var text = state.postText === null ? defaultPost() : state.postText;
       title = s.done ? "Publicado" : "Prévia do LinkedIn";
@@ -1441,6 +1585,14 @@
     var f = state.flow;
     var ter = state.day === "ter";
     var toTer = { label: "Avançar para terça", proto: "dia", dia: "ter" };
+    if (state.externo) {
+      if (r === "chatgpt" && state.gpt === 0) return { text: "Via ChatGPT: o médico tira a dúvida fora da plataforma. Envie a pergunta." };
+      if (r === "chatgpt" && state.gpt === 1) return { text: "O ChatGPT pesquisa na web." };
+      if (r === "chatgpt") return { text: 'A resposta cita o Lilly 360. Toque em "Lilly 360" para abrir o artigo.' };
+      if (state.deslogado) return { text: "Área deslogada: o artigo é aberto e não usa dado do médico. Triagem, ferramentas e material pedem login com CRM." };
+      if (r === "tema") return { text: "Logado: o médico continua no mesmo tema, agora com triagem, ferramentas e envio ao paciente." };
+      return { text: "Logado pelo artigo: a home é a de primeiro acesso, porque a plataforma ainda não conhece o uso dele." };
+    }
     if (!f && state.primeiroAcesso) return { text: "Primeiro acesso: o que o médico vê no primeiro login, antes de a plataforma conhecer o uso dele." };
     if (!f) return { text: "Navegação livre. Escolha um fluxo para ser guiado passo a passo." };
     if (f === 1) {
@@ -1488,8 +1640,9 @@
       if (b.closest("#proto-hint")) return;
       b.setAttribute("aria-pressed", String(b.dataset.dia === state.day));
     });
+    var cenario = state.externo ? "externo" : state.primeiroAcesso ? "primeiro" : "recorrente";
     document.querySelectorAll('[data-proto="home"]').forEach(function (b) {
-      b.setAttribute("aria-pressed", String((b.dataset.home === "primeiro") === state.primeiroAcesso));
+      b.setAttribute("aria-pressed", String(b.dataset.home === cenario));
     });
     var h = hint();
     var actionHtml = "";
@@ -1517,7 +1670,6 @@
       t.classList.toggle("is-ok", state.goal !== null && state.goal <= meta);
       t.classList.toggle("is-over", (state.goal !== null && state.goal > meta) || (state.counting && state.goal === null && state.touches > meta));
     }
-    $("#proto-release").textContent = "Esta tela: " + ROUTES[r].release;
   }
 
   /* ---------- Movimento ---------- */
@@ -1581,6 +1733,13 @@
 
   function render() {
     var route = parseRoute();
+    if (state.deslogado && !ROUTES[route.name].publico) {
+      state.sheet = { type: "login" };
+      location.replace("#/artigo");
+      return;
+    }
+    document.body.classList.toggle("is-externo", route.name === "chatgpt");
+    document.body.classList.toggle("is-deslogado", state.deslogado);
     var changed = lastRoute !== location.hash;
     lastRoute = location.hash;
     var app = $("#app");
@@ -1593,7 +1752,9 @@
     document.body.classList.toggle("has-hero", !!app.querySelector(".hero"));
     if (changed) animateEntrance(app);
     else markNew(app, seen);
-    document.title = ROUTES[route.name].titulo + " — Lilly 360";
+    document.title = route.name === "chatgpt" ? "ChatGPT" : ROUTES[route.name].titulo + " — Lilly 360";
+    var gptInput = $("#gpt-input");
+    if (gptInput) ajustarComposer(gptInput);
 
     renderNav();
     var navKey = ROUTES[route.name].nav;
@@ -1740,6 +1901,16 @@
       renderBackstage();
       save();
       return false;
+    },
+    "gpt-abrir": function () {
+      sig("visita_externa", { origem: "chatgpt", pagina: "artigo_aberto" }, "Visita anônima: sem login, nada vai para o perfil.");
+    },
+    "gpt-fora": function () {
+      toast("No protótipo, só o link do Lilly 360 abre");
+      return false;
+    },
+    "login-abrir": function () {
+      state.sheet = { type: "login" };
     },
     "whatsapp-enviar": function () {
       var flowSend = state.flow === 1 && parseRoute().name === "tema";
@@ -1942,6 +2113,34 @@
     go(n ? FLOWS[n].inicio : "#/inicio");
   }
 
+  function startExterno() {
+    var keepBackstage = state.backstage;
+    state = initialState();
+    state.backstage = keepBackstage;
+    state.externo = true;
+    state.deslogado = true;
+    window.scrollTo(0, 0);
+    go("#/chatgpt");
+  }
+
+  function gptEnviar() {
+    state.gpt = 1;
+    render();
+    setTimeout(function () {
+      if (state.gpt !== 1) return;
+      state.gpt = 2;
+      render();
+    }, reducedMotion() ? 400 : 1800);
+  }
+
+  function entrar() {
+    state.deslogado = false;
+    state.primeiroAcesso = true;
+    state.sheet = null;
+    sig("login", { origem: "artigo_aberto", canal: "chatgpt" }, "A partir do login, o uso passa a entrar no perfil.");
+    go("#/tema/ajuste-de-dose");
+  }
+
   var PROTO = {
     dia: function (el) {
       setDay(el.dataset.dia);
@@ -1953,13 +2152,20 @@
       save();
     },
     home: function (el) {
+      if (el.dataset.home === "externo") {
+        startExterno();
+        return;
+      }
+      state.externo = false;
+      state.deslogado = false;
       state.primeiroAcesso = el.dataset.home === "primeiro";
       window.scrollTo(0, 0);
       if (state.primeiroAcesso && state.flow) startFlow(0);
       else go("#/inicio");
     },
     reiniciar: function () {
-      startFlow(state.flow);
+      if (state.externo) startExterno();
+      else startFlow(state.flow);
     },
     progresso: function () {
       state.scrollTo = "secao-progresso";
@@ -2015,12 +2221,12 @@
     input.style.height = "auto";
     input.style.height = Math.min(input.scrollHeight, 200) + "px";
     input.style.overflowY = input.scrollHeight > 200 ? "auto" : "hidden";
-    var send = input.form && input.form.querySelector(".ask-send");
+    var send = input.form && input.form.querySelector(".ask-send, .gpt-send");
     if (send) send.disabled = !input.value.trim();
   }
 
   document.addEventListener("keydown", function (e) {
-    if (e.target.matches(".ask-form textarea") && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    if (e.target.matches(".ask-form textarea, #gpt-input") && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       e.target.form.requestSubmit();
     } else if (e.target.id === "wa-fone" && e.key === "Enter") {
@@ -2031,7 +2237,7 @@
   });
 
   document.addEventListener("input", function (e) {
-    if (e.target.matches(".ask-form textarea")) {
+    if (e.target.matches(".ask-form textarea, #gpt-input")) {
       ajustarComposer(e.target);
     } else if (e.target.id === "busca-input") {
       state.query = e.target.value;
@@ -2052,6 +2258,17 @@
   });
 
   document.addEventListener("submit", function (e) {
+    if (e.target.dataset.form === "gpt") {
+      e.preventDefault();
+      if (state.gpt === 0) gptEnviar();
+      else toast("No protótipo, a conversa tem uma pergunta só");
+      return;
+    }
+    if (e.target.dataset.form === "login") {
+      e.preventDefault();
+      entrar();
+      return;
+    }
     if (e.target.dataset.form === "pesquisa") {
       e.preventDefault();
       var input = e.target.querySelector("textarea");

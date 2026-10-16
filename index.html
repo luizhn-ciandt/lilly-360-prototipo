@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Instrument+Serif:ital@0;1&display=swap" />
-    <link rel="stylesheet" href="styles.css?v=83" />
+    <link rel="stylesheet" href="styles.css?v=85" />
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute" aria-hidden="true">
@@ -67,6 +67,7 @@
             <span class="dot" aria-hidden="true"></span>
           </button>
           <a class="avatar" href="#/voce" data-nav="voce" aria-label="Você: Dr. Paulo Ferreira, Cardiologia">PF</a>
+          <button class="header-entrar" type="button" data-action="login-abrir">Entrar</button>
         </div>
       </div>
     </header>
@@ -105,10 +106,10 @@
         </div>
         <p class="proto-hint" id="proto-hint" aria-live="polite"></p>
         <span class="proto-stat" id="proto-touches"></span>
-        <span class="proto-stat" id="proto-release"></span>
         <div class="proto-seg" role="group" aria-label="Home simulada">
           <button type="button" data-proto="home" data-home="recorrente" aria-pressed="true">Recorrente</button>
           <button type="button" data-proto="home" data-home="primeiro" aria-pressed="false">Primeiro acesso</button>
+          <button type="button" data-proto="home" data-home="externo" aria-pressed="false">Via ChatGPT</button>
         </div>
         <button class="proto-button" type="button" data-proto="reiniciar">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-reset" /></svg>
@@ -119,6 +120,6 @@
 
     <div class="toast-root" id="toast-root" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=72"></script>
+    <script src="app.js?v=75"></script>
   </body>
 </html>
