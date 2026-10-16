@@ -44,6 +44,7 @@
       t0: Date.now(),
       signals: [],
       query: "",
+      chat: [],
       triage: null,
       sent: false,
       lessonPlayed: false,
@@ -68,6 +69,7 @@
       posted: false,
       sheet: null,
       backstage: false,
+      primeiroAcesso: false,
       why: null,
       audio: false,
       savedKit: false,
@@ -79,6 +81,8 @@
   var lastRoute = null;
   var lastTouches = null;
   var sheetTimer = null;
+  /* Telefone do paciente: só em memória, para um envio. Nunca entra no state salvo. */
+  var waFone = "";
   var backstageTimer = null;
   var revealObserver = null;
 
@@ -88,6 +92,7 @@
       if (raw) {
         var saved = Object.assign(initialState(), JSON.parse(raw));
         if (!FLOWS[saved.flow] || FLOWS[saved.flow].oculto) saved.flow = 0;
+        saved.chat = saved.chat.map(function (t) { return { q: t.q }; });
         return saved;
       }
     } catch (e) {}
@@ -201,6 +206,41 @@
   ];
 
   var SUGESTOES = ["Ajuste de dose com creatinina alta", "Tremor com betabloqueador", "Potássio alto com espironolactona", "iSGLT2 na DRC"];
+
+  var RESPOSTAS = [
+    {
+      titulo: "Ajuste de dose de IECA quando a creatinina sobe",
+      kw: "ajuste dose creatinina ieca bra enalapril titulacao titular",
+      pontos: [
+        "Uma alta da creatinina de até 30% nas primeiras semanas depois de iniciar ou aumentar IECA ou BRA é esperada e, em geral, não exige suspender o remédio.",
+        "Reavalie creatinina e potássio em 1 a 2 semanas depois de cada ajuste.",
+        "Acima de 30%, ou com potássio acima de 5,5 mmol/L, reduza a dose e procure outras causas: desidratação, anti-inflamatório, estenose de artéria renal."
+      ],
+      ref: "KDIGO 2024 Clinical Practice Guideline for CKD; Diretriz Brasileira de Insuficiência Cardíaca. Revisado em setembro de 2026.",
+      acao: ["Abrir página e triagem", "#/tema/ajuste-de-dose"]
+    },
+    {
+      titulo: "Insuficiência cardíaca com fração de ejeção reduzida",
+      kw: "icfer insuficiencia cardiaca fracao ejecao reduzida classes",
+      pontos: [
+        "As quatro classes reduzem mortalidade e hospitalização na ICFEr e devem ser iniciadas e tituladas em etapas: IECA, BRA ou sacubitril-valsartana; betabloqueador; antagonista mineralocorticoide; iSGLT2.",
+        "Altas de creatinina abaixo de 30% não justificam suspender IECA ou BRA."
+      ],
+      ref: "ESC 2021 Guidelines for heart failure e atualização de 2023.",
+      acao: ["Continuar a lição", "#/licao/ic-fer"]
+    },
+    {
+      titulo: "iSGLT2 na doença renal crônica",
+      kw: "isglt2 sglt2 dapagliflozina empagliflozina drc",
+      pontos: [
+        "iSGLT2 com TFG a partir de 20 a 25 protege rim e coração.",
+        "Os iSGLT2 reduzem hospitalização e morte cardiovascular na ICFEr, independentemente de diabetes.",
+        "Anti-inflamatório piora a função renal e a retenção de sódio."
+      ],
+      ref: "KDIGO 2024; ESC 2023 focused update.",
+      acao: ["Abrir o caso clínico", "#/caso/rim-coracao"]
+    }
+  ];
 
   var QUIZ = {
     licao: [
@@ -378,28 +418,9 @@
     tools: '<svg width="200" height="100" viewBox="0 0 200 100" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 20h40M40 0v40" transform="translate(10 30)" /><path d="M80 50h40" /><path d="M150 35l30 30M180 35l-30 30" /><circle cx="100" cy="35" r="3" fill="#d31710" stroke="none" /><circle cx="100" cy="65" r="3" fill="#d31710" stroke="none" /></svg>',
     replay: '<svg width="200" height="90" viewBox="0 0 200 90" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"><rect x="6" y="20" width="56" height="50" rx="10" /><rect x="72" y="20" width="56" height="50" rx="10" /><rect x="138" y="20" width="56" height="50" rx="10" /><path d="M28 36v18l14-9z" fill="#d31710" stroke="none" /><path d="M94 36v18l14-9z" fill="currentColor" stroke="none" /><path d="M160 36v18l14-9z" fill="currentColor" stroke="none" /></svg>',
     slides: '<svg width="200" height="110" viewBox="0 0 200 110" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="30" y="14" width="140" height="80" rx="10" /><path d="M50 74l26-26 18 16 22-30 34 40" /><circle cx="64" cy="36" r="6" fill="#d31710" stroke="none" /></svg>',
+    perfil: '<svg width="200" height="100" viewBox="0 0 200 100" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M30 25h140M30 50h140M30 75h140" /><circle cx="70" cy="25" r="8" fill="currentColor" stroke="none" /><circle cx="130" cy="50" r="8" fill="#d31710" stroke="none" /><circle cx="95" cy="75" r="8" fill="currentColor" stroke="none" /></svg>',
     qr: '<svg width="200" height="110" viewBox="0 0 200 110" fill="currentColor"><rect x="60" y="10" width="26" height="26" rx="4" /><rect x="114" y="10" width="26" height="26" rx="4" /><rect x="60" y="64" width="26" height="26" rx="4" /><rect x="96" y="46" width="8" height="8" /><rect x="114" y="64" width="8" height="8" /><rect x="132" y="82" width="8" height="8" fill="#d31710" /><rect x="96" y="82" width="8" height="8" /><rect x="132" y="64" width="8" height="8" /></svg>'
   };
-
-  function moveIndicator(link, instant) {
-    var bar = $(".nav-indicator");
-    if (!bar) return;
-    var target = link || $('.nav-link[aria-current="page"]');
-    if (!target || !target.offsetWidth) {
-      bar.classList.remove("is-on");
-      return;
-    }
-    var jump = instant || !bar.classList.contains("is-on");
-    bar.classList.toggle("is-instant", jump);
-    bar.style.width = target.offsetWidth + "px";
-    bar.style.transform = "translateX(" + target.offsetLeft + "px)";
-    bar.classList.add("is-on");
-    if (jump) {
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () { bar.classList.remove("is-instant"); });
-      });
-    }
-  }
 
   function cardHtml(item) {
     var seen = state.replaySeen.length;
@@ -450,7 +471,7 @@
 
   function page(opts, body) {
     return '<section class="page' + (opts.narrow ? " page-narrow" : "") + '"><div class="container">' +
-      (opts.back !== false ? '<a class="back-link" href="' + (opts.back || "#/inicio") + '">' + icon("back", 18, 2) + (opts.backLabel || "Início") + "</a>" : "") +
+      (opts.back !== false ? '<a class="back-link" href="' + (opts.back || "#/inicio") + '"' + (opts.backTo ? ' data-action="ir-secao" data-v="' + opts.backTo + '"' : "") + ">" + icon("back", 18, 2) + (opts.backLabel || "Início") + "</a>" : "") +
       (opts.eyebrow ? '<p class="eyebrow page-eyebrow">' + opts.eyebrow + "</p>" : "") +
       '<div class="page-head' + (opts.intro ? " has-intro" : "") + '">' +
       '<h1 class="display page-title" tabindex="-1" data-focus>' + opts.title + "</h1>" +
@@ -488,23 +509,27 @@
 
   var VIEWS = {};
 
+  var HERO_IMG = "https://images.ctfassets.net/tkom1vk0n4w2/5gNDdYkL3DudBVnsVF4UWp/bb1291489c3f8f631cf22b2b734cc4d5/GettyImages-1765296819_1.webp?fm=webp&w=2400&q=80";
+  var HERO_LAB = "https://images.ctfassets.net/tkom1vk0n4w2/6fA2K84SlNaoYkmUn8Bavh/b3d50ff0bd4e6c947279e5b66b881aec/LLYPBRDK0026_CA_Eli_Lilly_Kim_TB_0257_sRGB.webp?fm=webp&w=2400&q=80";
+  var HERO_EQUIPE = "https://images.ctfassets.net/tkom1vk0n4w2/6kaVMiu1AyTVYX9DM5pMwa/3e607b6be6e99b499bf1ee43e2a11567/GettyImages-1832099991_1.webp?fm=webp&w=2400&q=80";
+  function currentLesson() {
+    return state.lessonDone
+      ? { ctx: "Lição 7 de 8", titulo: "Cardiologia Avançada", falta: "faltam 18 minutos.", nome: "Manejo de arritmias", valor: 0, meta: "0 de 18 min", pct: "0%", href: "#/licao/arritmias", prox: "Prevenção de morte <em>súbita</em>", proxMeta: "Lição 8 de 8, cerca de 15 min" }
+      : { ctx: "Lição 6 de 8", titulo: "Cardiologia Avançada", falta: "faltam 4 minutos.", nome: "Insuficiência cardíaca com fração de ejeção reduzida", valor: 0.75, meta: "12 de 16 min", pct: "75%", href: "#/licao/ic-fer", prox: "Manejo de <em>arritmias</em>", proxMeta: "Lição 7 de 8, cerca de 18 min" };
+  }
+
   VIEWS.inicio = function () {
+    if (state.primeiroAcesso) return homePrimeiroAcesso();
     var p = progress();
     var ring = 2 * Math.PI * 28;
-    var lesson = state.lessonDone
-      ? { ctx: "Cardiologia Avançada, lição 7 de 8", titulo: "Faltam 18 minutos.", nome: "Manejo de arritmias", valor: 0, meta: "0 de 18 min", pct: "0%", href: "#/licao/arritmias", prox: "Prevenção de morte <em>súbita</em>", proxMeta: "Lição 8 de 8, cerca de 15 min" }
-      : { ctx: "Cardiologia Avançada, lição 6 de 8", titulo: "Faltam 4 minutos.", nome: "Insuficiência cardíaca com fração de ejeção reduzida", valor: 0.75, meta: "12 de 16 min", pct: "75%", href: "#/licao/ic-fer", prox: "Manejo de <em>arritmias</em>", proxMeta: "Lição 7 de 8, cerca de 18 min" };
+    var lesson = currentLesson();
     var radarCustom = state.eventAttended && state.day === "ter";
 
-    return '<section class="greeting" aria-labelledby="saudacao"><div class="container"><div>' +
+    return '<section class="hero on-dark" aria-labelledby="saudacao">' + heroSlides() +
+      '<div class="container hero-inner"><div class="hero-head">' +
       '<p class="eyebrow">' + DIAS[state.day] + "</p>" +
       '<h1 class="display greeting-title" id="saudacao" tabindex="-1" data-focus>Bom dia, <em>Dr. Paulo</em>.</h1></div>' +
-      '<a class="recert" href="#/voce" aria-label="Recertificação ' + p.recert + "% concluída. Faltam " + num(p.faltam) + ' horas até 31 de março de 2027">' +
-      '<span class="ring" aria-hidden="true"><svg width="64" height="64" viewBox="0 0 64 64"><circle class="ring-track" cx="32" cy="32" r="28" fill="none" stroke-width="5" /><circle class="ring-value" cx="32" cy="32" r="28" fill="none" stroke-width="5" stroke-dasharray="' + ((ring * p.recert) / 100).toFixed(1) + " " + ring.toFixed(1) + '" /></svg><span class="ring-label">' + p.recert + "%</span></span>" +
-      '<span><span class="recert-title">Recertificação</span><br /><span class="recert-detail">Faltam ' + num(p.faltam) + " h até 31 mar 2027</span></span></a></div></section>" +
-
-      '<section class="resume-band" aria-labelledby="retomada"><div class="container">' +
-      '<div class="resume on-dark"><div class="resume-main"><div>' +
+      '<div class="hero-foot"><div class="resume-main" role="group" aria-labelledby="retomada"><div>' +
       '<p class="resume-context">' + lesson.ctx + "</p>" +
       '<h2 class="resume-title" id="retomada">' + lesson.titulo + "</h2></div>" +
       '<p class="resume-lesson">' + lesson.nome + "</p>" +
@@ -512,22 +537,22 @@
       '<div class="progress-meta"><span>' + lesson.meta + "</span><span>" + lesson.pct + "</span></div></div>" +
       '<div class="resume-actions"><a class="button button-primary" href="' + lesson.href + '">' + icon("play", 16) + "Continuar lição</a>" +
       '<button class="button button-outline" type="button" data-action="ouvir-licao">' + icon("headphones", 18) + (state.audio ? "Ouvindo agora" : "Ouvir áudio") + "</button></div></div>" +
+      '<div class="hero-side">' +
+      '<a class="recert" href="#/voce" aria-label="Recertificação ' + p.recert + "% concluída. Faltam " + num(p.faltam) + ' horas até 31 de março de 2027">' +
+      '<span class="ring" aria-hidden="true"><svg width="64" height="64" viewBox="0 0 64 64"><circle class="ring-track" cx="32" cy="32" r="28" fill="none" stroke-width="5" /><circle class="ring-value" cx="32" cy="32" r="28" fill="none" stroke-width="5" stroke-dasharray="' + ((ring * p.recert) / 100).toFixed(1) + " " + ring.toFixed(1) + '" /></svg><span class="ring-label">' + p.recert + "%</span></span>" +
+      '<span><span class="recert-title">Recertificação</span><br /><span class="recert-detail">Faltam ' + num(p.faltam) + " h até 31 mar 2027</span></span></a>" +
       '<div class="resume-next"><p class="eyebrow">A seguir</p><p class="display resume-next-title">' + lesson.prox + "</p>" +
-      '<p class="resume-next-meta">' + lesson.proxMeta + '</p><a class="cta-link" href="#/aprendizado">Ver lição</a></div></div></div></section>' +
+      '<p class="resume-next-meta">' + lesson.proxMeta + '</p><a class="cta-link" href="#/aprendizado">Ver lição</a></div></div></div></div></section>' +
 
-      '<section class="band band-white" aria-labelledby="para-voce"><div class="container"><div class="opening">' +
+      askSection() +
+
+      '<section class="band band-cream" aria-labelledby="para-voce"><div class="container"><div class="opening">' +
       '<p class="eyebrow">Para você</p><h2 class="display opening-title" id="para-voce">Selecionado para <em>a sua prática</em>.</h2>' +
       '<p class="opening-intro">Com base no seu perfil em Cardiologia e no que você fez nesta semana. Cada item diz por que está aqui.</p></div>' +
       '<div class="cards">' + selection().map(cardHtml).join("") + "</div>" +
       '<div class="see-all"><a class="button button-primary" href="#/aprendizado">Ver todas as recomendações</a></div></div></section>' +
 
-      '<section class="band band-cream" aria-labelledby="radar-home"><div class="container"><div class="radar-home">' +
-      '<div><p class="eyebrow">Radar da semana</p><h2 class="display section-title" id="radar-home">O que seu paciente vai <em>perguntar</em>.</h2>' +
-      (radarCustom ? '<p class="tag-note">Personalizado com o congresso de ontem</p>' : "") +
-      '<a class="cta-link" href="#/radar">Abrir o Radar</a></div>' +
-      '<ul class="radar-list">' + radarItems().map(function (r) {
-        return '<li><span class="radar-kicker">' + r.k + "</span><span>" + r.t + "</span></li>";
-      }).join("") + "</ul></div></div></section>" +
+      radarSection(radarCustom) +
 
       '<section class="band band-rose" aria-labelledby="progresso" id="secao-progresso"><div class="container"><div class="opening">' +
       '<p class="eyebrow">Seu progresso</p><h2 class="display opening-title" id="progresso">Cada lição <em>conta</em>.</h2></div>' +
@@ -541,10 +566,94 @@
         ? '<div class="unlocked on-dark"><div><p class="eyebrow">Novos selos desbloqueados</p><ul class="unlocked-list"><li>' + icon("medal", 22) + "Especialista em Cardiologia</li><li>" + icon("medal", 22) + 'Aprendiz Ativo, 20 atividades</li></ul></div><div class="unlocked-actions"><a class="button button-dark" href="#/voce">Ver certificados</a><a class="button button-line" href="#/voce">Ver selos</a></div></div>' +
           '<div class="next-trail"><div><p class="eyebrow">Continuamos por aqui</p><p class="next-trail-title">Cardio-renal na prática</p><p class="next-trail-meta">Próxima trilha recomendada · 6 lições</p></div><a class="button button-line" href="#/aprendizado">Ver trilha</a></div>'
         : "") +
-      '<div class="page-foot"><p class="legal">Conteúdo ilustrativo, sujeito a MLR. Material educacional destinado a profissionais de saúde.</p>' +
-      '<p class="footer-links"><a href="#/voce" data-action="ir-secao" data-v="preferencias">Preferências</a><a href="#/voce" data-action="ir-secao" data-v="preferencias">Privacidade</a><button type="button" data-action="why" data-item="inicio">Por que vejo isto</button></p></div>' +
+      homeFoot() +
       "</div></section>";
   };
+
+  function heroSlides() {
+    return '<div class="hero-slides" aria-hidden="true">' +
+      '<img class="hero-media" src="' + HERO_IMG + '" alt="" fetchpriority="high" /></div>';
+  }
+
+  function homeFoot() {
+    return '<div class="page-foot"><p class="legal">Conteúdo ilustrativo, sujeito a MLR. Material educacional destinado a profissionais de saúde.</p>' +
+      '<p class="footer-links"><a href="#/voce" data-action="ir-secao" data-v="preferencias">Preferências</a><a href="#/voce" data-action="ir-secao" data-v="preferencias">Privacidade</a><button type="button" data-action="why" data-item="inicio">Por que vejo isto</button></p></div>';
+  }
+
+  function radarSection(custom) {
+    return '<section class="band band-white" aria-labelledby="radar-home"><div class="container"><div class="radar-home">' +
+      '<div><p class="eyebrow">Radar da semana</p><h2 class="display section-title" id="radar-home">O que seu paciente vai <em>perguntar</em>.</h2>' +
+      (custom ? '<p class="tag-note">Personalizado com o congresso de ontem</p>' : "") +
+      '<a class="cta-link" href="#/radar">Abrir o Radar</a></div>' +
+      '<ul class="radar-list">' + radarItems().map(function (r) {
+        return '<li><span class="radar-kicker">' + r.k + "</span><span>" + r.t + "</span></li>";
+      }).join("") + "</ul></div></div></section>";
+  }
+
+  function askComposer(id) {
+    return '<form class="ask-form" role="search" data-form="pesquisa">' +
+      '<label class="visually-hidden" for="' + id + '">Descreva o cenário do seu paciente</label>' +
+      '<textarea id="' + id + '" rows="1" autocomplete="off" placeholder="Descreva o cenário"></textarea>' +
+      '<button class="ask-send" type="submit" aria-label="Pesquisar" disabled>' + icon("arrow-up", 20, 2.25) + "</button></form>";
+  }
+
+  function askChips() {
+    return '<p class="eyebrow search-label">Perguntas frequentes de cardiologistas</p>' +
+      '<div class="chips">' + SUGESTOES.map(function (s) {
+        return '<button class="chip" type="button" data-action="pesquisa-sugestao" data-q="' + s + '">' + s + "</button>";
+      }).join("") + "</div>";
+  }
+
+  function askFoot() {
+    return '<div class="ask-foot"' + (state.chat.length ? "" : " hidden") + '><button class="text-button ask-clear" type="button" data-action="pesquisa-limpar">Nova pesquisa</button></div>';
+  }
+
+  function askSection() {
+    return '<section class="band ask" aria-labelledby="pesquisa-titulo" id="pesquisa"><div class="container"><div class="ask-inner">' +
+      '<div class="ask-head"><p class="eyebrow">Pesquisa</p><h2 class="display section-title" id="pesquisa-titulo">O que você precisa <em>agora</em>?</h2></div>' +
+      '<div class="ask-thread" id="pesquisa-thread" aria-live="polite">' + pesquisaThread() + "</div>" +
+      askComposer("pesquisa-input") + askFoot() + askChips() +
+      "</div></div></section>";
+  }
+
+  var AREAS = [
+    { href: "#/protocolos", media: "slides", tone: "ink", tag: "Acervo aprovado", t: "Protocolos", d: "Estudos e diretrizes do acervo aprovado, para ler aqui ou baixar.", cta: "Abrir o acervo" },
+    { href: "#/pacientes", media: "tools", tone: "cream", tag: "Kit", t: "Meus pacientes", d: "Calculadoras e material para enviar ao paciente.", cta: "Ver ferramentas" },
+    { href: "#/congressos", media: "replay", tone: "rose", tag: "Ao vivo e replay", t: "Congressos", d: "Agenda de lives e congressos, com replays em lições curtas.", cta: "Ver agenda" },
+    { href: "#/radar", media: "wave", tone: "rose", tag: "Nesta semana", t: "Radar de sinais", d: "O que seus pacientes vão perguntar nesta semana.", cta: "Abrir o Radar" },
+    { href: "#/aprendizado", media: "ecg", tone: "ink", tag: "Trilhas e casos", t: "Aprendizado", d: "Trilhas e casos clínicos que contam para a recertificação.", cta: "Ver trilhas" },
+    { href: "#/voce", media: "perfil", tone: "cream", tag: "Perfil", t: "Você", d: "Seu perfil, certificados e o que a plataforma usa para personalizar.", cta: "Ver perfil" }
+  ];
+
+  function homePrimeiroAcesso() {
+    return '<section class="hero on-dark hero--busca' + (state.chat.length ? " is-conversa" : "") + '" aria-labelledby="saudacao">' + heroSlides() +
+      '<div class="container hero-inner"><div class="hero-head">' +
+      '<p class="eyebrow">' + DIAS[state.day] + "</p>" +
+      '<h1 class="display greeting-title" id="saudacao" tabindex="-1" data-focus>Boas-vindas, <em>Dr. Paulo</em>.</h1></div>' +
+      '<div class="hero-ask"><h2 class="display hero-ask-title">O que você precisa <em>agora</em>?</h2>' +
+      '<div class="ask-thread hero-thread" id="pesquisa-thread" role="region" aria-label="Respostas da pesquisa" tabindex="' + (state.chat.length ? 0 : -1) + '" aria-live="polite">' + pesquisaThread() + "</div>" +
+      askComposer("pesquisa-hero-input") + askFoot() + askChips() + "</div></div></section>" +
+
+      '<section class="band band-cream" aria-labelledby="areas"><div class="container"><div class="opening">' +
+      '<p class="eyebrow">Lilly 360</p><h2 class="display opening-title" id="areas">Tudo da sua prática em <em>um lugar</em>.</h2>' +
+      '<p class="opening-intro">Conteúdo aprovado pela área médica da Lilly, com referência, para consultar antes, durante e depois da consulta.</p></div>' +
+      '<div class="cards cards-3">' + AREAS.map(function (a) {
+        return '<article class="card">' +
+          '<div class="card-media media-' + a.tone + '" aria-hidden="true">' + MEDIA[a.media] + '<span class="card-media-tag">' + a.tag + "</span></div>" +
+          '<h3 class="card-title">' + a.t + "</h3>" +
+          '<p class="card-body">' + a.d + "</p>" +
+          '<div class="card-foot"><a class="cta-link" href="' + a.href + '">' + a.cta + "</a></div></article>";
+      }).join("") + "</div></div></section>" +
+
+      radarSection(false) +
+
+      '<section class="band band-rose" aria-labelledby="personalizacao"><div class="container"><div class="opening">' +
+      '<p class="eyebrow">Personalização</p><h2 class="display opening-title" id="personalizacao">A plataforma aprende <em>com você</em>.</h2>' +
+      '<p class="opening-intro">A cada acesso, a home mostra o que faz sentido para a sua prática, e cada item diz por que está ali. Você decide o que pode ser usado.</p></div>' +
+      '<div class="see-all"><a class="button button-dark" href="#/voce" data-action="ir-secao" data-v="preferencias">Ver preferências</a></div>' +
+      homeFoot() +
+      "</div></section>";
+  }
 
   function radarItems() {
     if (state.eventAttended && state.day === "ter") {
@@ -577,17 +686,72 @@
       '<div id="busca-resultados" aria-live="polite">' + searchResults() + "</div>");
   };
 
-  function searchResults() {
-    var q = normalize(state.query.trim());
-    if (!q) return "";
-    var words = q.split(/\s+/).filter(function (w) {
-      return w.length > 2;
+  var STOPWORDS = ["com", "sem", "que", "para", "por", "uma", "uns", "dos", "das", "nos", "nas", "mas", "como", "qual", "quais", "quando", "depois", "apos", "antes", "esta", "isso", "meu", "minha", "paciente", "anos"];
+
+  function queryWords(text) {
+    return normalize(text.trim()).split(/[^a-z0-9]+/).filter(function (w) {
+      return w.length > 2 && STOPWORDS.indexOf(w) === -1;
     });
-    var found = ACERVO.filter(function (it) {
+  }
+
+  function acervoMatch(text) {
+    var words = queryWords(text);
+    return ACERVO.filter(function (it) {
       return words.some(function (w) {
         return it.kw.indexOf(w) > -1 || normalize(it.t).indexOf(w) > -1;
       });
     });
+  }
+
+  function respostasMatch(text) {
+    var words = queryWords(text);
+    return RESPOSTAS.filter(function (r) {
+      return words.some(function (w) {
+        return r.kw.indexOf(w) > -1;
+      });
+    });
+  }
+
+  function pesquisaTurn(turn) {
+    var q = '<p class="ask-q">' + esc(turn.q) + "</p>";
+    var head = '<div class="ask-who"><span class="ask-mark" aria-hidden="true">' + icon("book", 16, 1.75) + '</span><span class="ask-label">Do acervo aprovado</span></div>';
+    if (turn.pending) {
+      return '<div class="ask-turn">' + q + '<div class="ask-a is-pending">' + head + '<p class="ask-wait">Procurando no acervo aprovado<span class="ask-dots" aria-hidden="true"><span></span><span></span><span></span></span></p></div></div>';
+    }
+    var respostas = respostasMatch(turn.q);
+    var fontes = acervoMatch(turn.q);
+    var body;
+    if (!respostas.length && !fontes.length) {
+      body = '<p class="ask-text">Nenhum item aprovado para "' + esc(turn.q) + '". Tente outras palavras ou abra o <a class="inline-link" href="#/protocolos">acervo</a>.</p>';
+    } else {
+      body = (respostas.length
+        ? respostas.map(function (r) {
+            var resto = r.pontos.slice(1);
+            return '<div class="ask-section"><h3 class="ask-h">' + r.titulo + '</h3><p class="ask-lead">' + r.pontos[0] + "</p>" +
+              (resto.length ? '<ul class="ask-points">' + resto.map(function (p) {
+                return "<li>" + p + "</li>";
+              }).join("") + "</ul>" : "") +
+              '<div class="ask-cite"><p class="ask-ref"><span class="ask-ref-label">Referência</span>' + r.ref + '</p><a class="button button-dark ask-cta" href="' + r.acao[1] + '">' + r.acao[0] + "</a></div></div>";
+          }).join("")
+        : '<p class="ask-text">Ainda não há um resumo aprovado para esta pergunta. Estes são os itens do acervo sobre o tema:</p>') +
+        (fontes.length
+          ? '<p class="ask-sources">Fontes no acervo</p><ul class="ask-fontes">' + fontes.map(function (it) {
+              return '<li><a class="ask-fonte" href="' + it.href + '"><span class="ask-fonte-tipo">' + it.tipo + '</span><span class="ask-fonte-titulo">' + it.t + "</span></a></li>";
+            }).join("") + "</ul>"
+          : "");
+    }
+    return '<div class="ask-turn">' + q + '<div class="ask-a">' + head + '<div class="ask-body">' + body +
+      '<p class="ask-note">Resposta montada só com trechos aprovados pela área médica, com referência. Nenhum texto é gerado por IA.</p></div></div></div>';
+  }
+
+  function pesquisaThread() {
+    return state.chat.map(pesquisaTurn).join("");
+  }
+
+  function searchResults() {
+    var q = normalize(state.query.trim());
+    if (!q) return "";
+    var found = acervoMatch(state.query);
     if (!found.length) return '<p class="search-empty">Nenhum item aprovado para "' + esc(state.query) + '". Tente outras palavras ou abra o <a class="inline-link" href="#/protocolos">acervo</a>.</p>';
     return '<p class="search-count">' + found.length + (found.length === 1 ? " item aprovado" : " itens aprovados") + "</p><ul class=\"result-list\">" + found.map(function (it) {
       return '<li><a class="result" href="' + it.href + '"><span class="result-type">' + it.tipo + '</span><span class="result-title">' + it.t + "</span>" + icon("chevron", 20, 2) + "</a></li>";
@@ -625,7 +789,7 @@
         '<button class="button button-primary" type="button" data-action="sheet" data-sheet="whatsapp" data-material="' + esc(t.material) + '">' + icon("send", 18, 2) + "Enviar ao paciente</button>" +
         '<p class="social-proof"><b>' + t.n + " cardiologistas</b> enviaram este material nesta semana. Número ilustrativo; só aparece acima de um mínimo de médicos.</p></div></div>";
     }
-    return page({ eyebrow: "Página educacional · conteúdo aprovado", title: "Ajuste de dose de IECA quando a <em>creatinina sobe</em>", back: "#/busca", backLabel: "Busca" }, body);
+    return page({ eyebrow: "Página educacional · conteúdo aprovado", title: "Ajuste de dose de IECA quando a <em>creatinina sobe</em>", back: "#/inicio", backTo: "pesquisa", backLabel: "Pesquisa" }, body);
   };
 
   VIEWS.licao = function (param) {
@@ -834,9 +998,12 @@
       '<button class="cta-link" type="button" data-action="salvar-kit">' + (state.savedKit ? "Salvo no seu kit" : "Salvar no meu kit") + "</button></div>");
   };
 
-  VIEWS.radar = function () {
-    var custom = state.eventAttended && state.day === "ter";
-    var items = custom
+  function radarCustom() {
+    return state.eventAttended && state.day === "ter";
+  }
+
+  function radarItems() {
+    return radarCustom()
       ? [
           { k: "Insulina de longa ação", t: "Pacientes com diabetes vão perguntar se a insulina de longa ação pesa no coração.", r: "Explique que o controle glicêmico estável reduz complicações e que o plano é revisado com os exames." },
           { k: "Cirurgias e medicamentos", t: "Quem vai operar quer saber se para o anticoagulante e o iSGLT2.", r: "A suspensão depende do tipo de cirurgia; o iSGLT2 costuma ser suspenso alguns dias antes." },
@@ -847,6 +1014,11 @@
           { k: "Em 14 dias", t: "Congresso de cardiologia: os estudos que devem mudar a prática.", r: "Um resumo em 90 segundos chega no dia do congresso." },
           { k: "Regulatório", t: "Nova diretriz de hipertensão: o que muda na meta de pressão.", r: "Notícia factual, com link para a fonte oficial." }
         ];
+  }
+
+  VIEWS.radar = function () {
+    var custom = radarCustom();
+    var items = radarItems();
     return page({ eyebrow: "Radar de sinais · semana de 5 de outubro", title: "O que seu paciente vai te perguntar nesta <em>semana</em>.", intro: custom ? "Personalizado com o seu aprendizado do congresso de ontem." : "Curado pela área médica da Lilly para cardiologistas." },
       (custom ? '<p class="tag-note">' + icon("check", 16, 2.5) + "Atualizado com o congresso de ontem</p>" : "") +
       '<div class="radar-cards">' + items.map(function (it) {
@@ -968,17 +1140,18 @@
       }).join("") + '</ul><p class="fine kit-foot">Linguagem simples, revisada pela equipe médica.</p></section></div>');
   };
 
+  var DOCS = [
+    ["KDIGO 2024: avaliação e manejo da DRC", "Diretriz internacional, 2024"],
+    ["ESC 2021: insuficiência cardíaca", "Diretriz europeia, 2021"],
+    ["Diretriz Brasileira de Insuficiência Cardíaca", "Diretriz nacional, 2021"],
+    ["iSGLT2 na doença renal crônica: revisão", "Revisão sistemática, 2025"],
+    ["Tremor e betabloqueador: o que investigar", "Artigo de revisão, 2023"]
+  ];
+
   VIEWS.protocolos = function () {
-    var docs = [
-      ["KDIGO 2024: avaliação e manejo da DRC", "Diretriz internacional, 2024"],
-      ["ESC 2021: insuficiência cardíaca", "Diretriz europeia, 2021"],
-      ["Diretriz Brasileira de Insuficiência Cardíaca", "Diretriz nacional, 2021"],
-      ["iSGLT2 na doença renal crônica: revisão", "Revisão sistemática, 2025"],
-      ["Tremor e betabloqueador: o que investigar", "Artigo de revisão, 2023"]
-    ];
     return page({ eyebrow: "Protocolos · acervo", title: "Estudos e <em>diretrizes</em>", intro: "Leia aqui, com o leitor do acervo, ou baixe o PDF." },
       '<section class="panel kit kit-single"><ul class="kit-list">' +
-      docs.map(function (d) {
+      DOCS.map(function (d) {
         return '<li class="kit-row doc-row">' + kitRow("file", d[0], d[1], '<span class="doc-actions">' +
           '<button class="text-button" type="button" data-action="ler-doc" data-v="' + d[0] + '">' + icon("book", 16, 2) + "Ler aqui</button>" +
           '<button class="text-button" type="button" data-action="ler-doc" data-v="' + d[0] + '" data-download="1">' + icon("download", 16, 2) + "Baixar</button></span>") + "</li>";
@@ -1034,6 +1207,119 @@
 
   /* ---------- Folhas (diálogos) ---------- */
 
+  /* ---------- Navegação ---------- */
+
+  function navMenu() {
+    var lesson = currentLesson();
+    var replay = state.liveMissed && state.day === "ter";
+    var custom = radarCustom();
+    return [
+      {
+        id: "inicio", nome: "Início", href: "#/inicio",
+        resumo: "Sua lição desta semana: " + lesson.falta,
+        card: { href: lesson.href, titulo: "Continuar lição", sub: lesson.titulo + ", " + lesson.ctx.toLowerCase() }
+      },
+      {
+        id: "aprendizado", nome: "Aprendizado", href: "#/aprendizado",
+        resumo: "Micro-lições com quiz, casos clínicos e replays.",
+        grupos: [{ links: [
+          ["Cardiologia Avançada", lesson.href],
+          ["Cardiologia - Fundamentos", state.trailDone ? "#/conclusao" : "#/trilha/cardio-fundamentos"],
+          ["Rim e coração no mesmo paciente", "#/caso/rim-coracao"]
+        ] }]
+      },
+      {
+        id: "pacientes", nome: "Meus pacientes", href: "#/pacientes",
+        resumo: "Ferramentas e materiais reordenados pelo seu uso.",
+        grupos: [
+          { titulo: "Ferramentas", links: KIT_FERRAMENTAS.map(function (t) { return [t[1], "#/tema/ajuste-de-dose"]; }) },
+          { titulo: "Material para o paciente", links: KIT_MATERIAIS.map(function (m) { return [m[0], "#/pacientes"]; }) }
+        ]
+      },
+      {
+        id: "protocolos", nome: "Protocolos", href: "#/protocolos",
+        resumo: "Leia aqui, com o leitor do acervo, ou baixe o PDF.",
+        grupos: [{ links: DOCS.map(function (d) { return [d[0], "#/protocolos"]; }) }]
+      },
+      {
+        id: "congressos", nome: "Congressos", href: "#/congressos",
+        resumo: "Lives, congressos e replays de cardiologia. Inscreva-se e escolha quando quer ser lembrado.",
+        grupos: [{ links: [
+          ["Atualização em Cardiologia 2026", replay ? "#/replay/cardio-2026" : "#/live/cardio-2026"],
+          ["Caso a caso: insuficiência cardíaca na prática", "#/congressos"],
+          ["Congresso de Cardiologia 2026", "#/congressos"]
+        ] }]
+      },
+      {
+        id: "radar", nome: "Radar de sinais", href: "#/radar",
+        resumo: custom ? "Personalizado com o seu aprendizado do congresso de ontem." : "Curado pela área médica da Lilly para cardiologistas.",
+        grupos: [{ links: radarItems().map(function (it) { return [it.t, "#/radar"]; }) }]
+      },
+      {
+        id: "mais", nome: "Mais",
+        resumo: "Também para você",
+        grupos: [{ links: [
+          ["Parceiros", "#/parceiros", "Patrocinado"],
+          ["Falar com a equipe", "#/equipe"]
+        ] }]
+      }
+    ];
+  }
+
+  function navHtml() {
+    var menu = navMenu();
+    var tabs = menu.map(function (m) {
+      var tab = m.href
+        ? '<a class="nav-tab" href="' + m.href + '" data-nav="' + m.id + '" data-tab="' + m.id + '">' + m.nome + "</a>" +
+          '<button class="icon-button nav-more" type="button" data-sub="' + m.id + '" aria-controls="nav-sub-' + m.id + '" aria-label="Abrir ' + m.nome + '">' + icon("chevron", 20, 1.75) + "</button>"
+        : '<button class="nav-tab" type="button" data-tab="' + m.id + '" data-sub="' + m.id + '" aria-controls="nav-sub-' + m.id + '">' + m.nome + '<span class="nav-more-icon">' + icon("chevron", 20, 1.75) + "</span></button>";
+      return '<li data-tab="' + m.id + '">' + tab + "</li>";
+    }).join("");
+    var subs = menu.map(function (m) {
+      var grupos = (m.grupos || []).map(function (g) {
+        return '<div class="nav-sub-group">' + (g.titulo ? '<p class="eyebrow nav-sub-heading">' + g.titulo + "</p>" : "") +
+          '<ul class="nav-sub-list">' + g.links.map(function (l) {
+            return '<li><a class="nav-sub-link" href="' + l[1] + '">' + l[0] + "</a>" + (l[2] ? ' <span class="nav-tag">' + l[2] + "</span>" : "") + "</li>";
+          }).join("") + "</ul></div>";
+      }).join("");
+      var card = m.card
+        ? '<a class="nav-card on-dark" href="' + m.card.href + '"><img class="nav-card-media" src="' + HERO_IMG + '" alt="" loading="lazy" />' +
+          '<span class="nav-card-text"><span class="display nav-card-title">' + m.card.titulo + '</span><span class="nav-card-sub">' + m.card.sub + "</span></span>" +
+          '<span class="nav-card-go">' + icon("chevron", 20, 2) + "</span></a>"
+        : "";
+      return '<div class="nav-sub" id="nav-sub-' + m.id + '" data-sub-panel="' + m.id + '">' +
+        '<button class="nav-back" type="button">' + icon("back", 18, 2) + "Voltar</button>" +
+        '<div class="nav-sub-body"><div class="nav-sub-summary">' +
+        (m.href ? '<a class="display nav-sub-title" href="' + m.href + '">' + m.nome + "</a>" : '<p class="display nav-sub-title">' + m.nome + "</p>") +
+        '<p class="nav-sub-text">' + m.resumo + "</p></div>" +
+        (grupos ? '<div class="nav-sub-groups">' + grupos + "</div>" : "") + card + "</div></div>";
+    }).join("");
+    return '<nav class="nav-main" aria-label="Principal"><ul class="nav-tabs">' + tabs + '</ul></nav><div class="nav-subs">' + subs + "</div>";
+  }
+
+  var navHtmlLast = "";
+
+  function renderNav() {
+    var html = navHtml();
+    if (html === navHtmlLast) return;
+    navHtmlLast = html;
+    var panel = $("#nav-panel");
+    var active = panel.querySelector(".nav-sub.is-active");
+    panel.innerHTML = html;
+    if (active) setNavTab(active.dataset.subPanel);
+  }
+
+  function foneFormatado(d) {
+    if (d.length <= 2) return d.length ? "(" + d : "";
+    var resto = d.slice(2);
+    var corte = d.length === 11 ? 5 : 4;
+    return "(" + d.slice(0, 2) + ") " + (resto.length > corte ? resto.slice(0, corte) + "-" + resto.slice(corte) : resto);
+  }
+
+  function foneValido(d) {
+    return d.length === 10 || d.length === 11;
+  }
+
   function renderSheet() {
     var root = $("#sheet-root");
     var s = state.sheet;
@@ -1059,12 +1345,15 @@
     if (s.type === "whatsapp") {
       title = s.done ? "Material enviado" : "Enviar ao paciente";
       body = s.done
-        ? '<p class="done-note">' + icon("check", 20, 2.5) + "Enviado pelo WhatsApp.</p>" +
+        ? '<p class="done-note">' + icon("check", 20, 2.5) + "Enviado pelo WhatsApp para +55 " + foneFormatado(waFone) + ".</p>" +
           (state.flow === 1 && state.goal !== null ? '<p class="sheet-big">' + state.goal + " toques · " + state.goalSecs + " segundos</p>" : "") +
           '<p class="panel-body">Próximo passo: material relacionado ao mesmo caso, "Potássio alto: o que comer e o que evitar".</p>' +
           '<div class="stack-actions"><button class="button button-primary" type="button" data-action="sheet-close">Concluir</button></div>'
-        : '<div class="wa"><p class="wa-head">WhatsApp · contato do paciente</p><div class="wa-bubble"><p>Olá! Aqui está o material que conversamos na consulta: <b>' + esc(s.material) + "</b>. Leia com calma e traga suas dúvidas no retorno.</p><p class=\"wa-link\">lilly360.com.br/m/7KQ2</p><p class=\"wa-foot\">Material educacional. Não substitui a consulta.</p></div></div>" +
-          '<div class="stack-actions"><button class="button button-primary" type="button" data-action="whatsapp-enviar">' + icon("send", 18, 2) + "Enviar pelo WhatsApp</button>" +
+        : '<div class="field wa-field"><label for="wa-fone">WhatsApp do paciente</label>' +
+          '<div class="wa-input"><span class="wa-ddi" aria-hidden="true">+55</span><input id="wa-fone" type="tel" inputmode="tel" autocomplete="off" placeholder="(11) 91234-5678" aria-describedby="wa-fone-ajuda" data-autofocus value="' + foneFormatado(waFone) + '" /></div>' +
+          '<p class="wa-ajuda" id="wa-fone-ajuda">Com DDD. Usado só neste envio, o número não fica salvo.</p></div>' +
+          '<div class="wa"><p class="wa-head" id="wa-head">WhatsApp · ' + (foneValido(waFone) ? "+55 " + foneFormatado(waFone) : "contato do paciente") + '</p><div class="wa-bubble"><p>Olá! Aqui está o material que conversamos na consulta: <b>' + esc(s.material) + "</b>. Leia com calma e traga suas dúvidas no retorno.</p><p class=\"wa-link\">lilly360.com.br/m/7KQ2</p><p class=\"wa-foot\">Material educacional. Não substitui a consulta.</p></div></div>" +
+          '<div class="stack-actions"><button class="button button-primary" type="button" data-action="whatsapp-enviar"' + (foneValido(waFone) ? "" : " disabled") + ">" + icon("send", 18, 2) + "Enviar pelo WhatsApp</button>" +
           '<div class="row-actions"><button class="text-button" type="button" data-action="material-alt" data-v="Impressão">Imprimir</button><button class="text-button" type="button" data-action="material-alt" data-v="QR">Mostrar QR</button></div></div>';
     } else if (s.type === "linkedin") {
       var text = state.postText === null ? defaultPost() : state.postText;
@@ -1087,7 +1376,7 @@
     }
     root.innerHTML = '<div class="sheet-backdrop" data-action="sheet-close"></div>' +
       '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><div class="sheet-head"><h2 class="sheet-title" id="sheet-title">' + title + '</h2><button class="sheet-close" type="button" data-action="sheet-close" aria-label="Fechar">' + icon("close", 20, 2) + "</button></div>" + body + "</div>";
-    var first = root.querySelector(".sheet .button, .sheet a, .sheet .text-button");
+    var first = root.querySelector(".sheet [data-autofocus]") || root.querySelector(".sheet .button, .sheet a, .sheet .text-button");
     if (first) first.focus();
   }
 
@@ -1121,7 +1410,6 @@
       el.hidden = !state.backstage;
     }
     document.body.classList.toggle("has-backstage", state.backstage);
-    $("#proto-backstage").setAttribute("aria-pressed", String(state.backstage));
     if (!state.backstage) return;
     var r = ROUTES[parseRoute().name];
     var html = '<div class="bs-block"><p class="bs-label">Esta tela</p><p class="bs-title">' + r.titulo + '</p><p class="bs-line"><span>Release</span><b>' + r.release + '</b></p><p class="bs-line"><span>Dado capturado</span><b>' + r.dado + "</b></p></div>";
@@ -1153,14 +1441,16 @@
     var f = state.flow;
     var ter = state.day === "ter";
     var toTer = { label: "Avançar para terça", proto: "dia", dia: "ter" };
+    if (!f && state.primeiroAcesso) return { text: "Primeiro acesso: o que o médico vê no primeiro login, antes de a plataforma conhecer o uso dele." };
     if (!f) return { text: "Navegação livre. Escolha um fluxo para ser guiado passo a passo." };
     if (f === 1) {
       if (state.sent) return { text: "Concluído: material enviado ao paciente em " + state.goal + " toques e " + state.goalSecs + " segundos. Meta: 5 toques, 1 minuto." };
-      if (r === "inicio") return { text: "Passo 1: o médico tem uma dúvida na consulta. Toque na busca, no cabeçalho." };
+      if (r === "inicio" && state.chat.some(function (t) { return !t.pending && respostasMatch(t.q)[0] === RESPOSTAS[0]; })) return { text: 'Passo 2: a resposta veio do acervo aprovado. Toque em "Abrir página e triagem".' };
+      if (r === "inicio") return { text: 'Passo 1: o médico tem uma dúvida na consulta. Na pesquisa logo abaixo do banner, descreva o cenário ou toque em "Ajuste de dose com creatinina alta".' };
       if (r === "busca") return { text: 'Passo 2: digite a dúvida ou toque em "Ajuste de dose com creatinina alta".' };
       if (r === "tema" && !state.triage) return { text: "Passo 3: leia o resumo e escolha a situação que apareceu no consultório." };
       if (r === "tema") return { text: 'Passo 4: ferramenta e material mudaram com a situação. Toque em "Enviar ao paciente".' };
-      return { text: "Volte à busca para seguir o fluxo.", href: "#/busca", label: "Abrir a busca" };
+      return { text: "Volte à pesquisa para seguir o fluxo.", href: "#/inicio", label: "Abrir a pesquisa" };
     }
     if (f === 3) {
       if (state.replaySeen.length === 3) return { text: "Concluído: replay recuperado sem ação extra." };
@@ -1197,6 +1487,9 @@
     document.querySelectorAll('[data-proto="dia"][data-dia]').forEach(function (b) {
       if (b.closest("#proto-hint")) return;
       b.setAttribute("aria-pressed", String(b.dataset.dia === state.day));
+    });
+    document.querySelectorAll('[data-proto="home"]').forEach(function (b) {
+      b.setAttribute("aria-pressed", String((b.dataset.home === "primeiro") === state.primeiroAcesso));
     });
     var h = hint();
     var actionHtml = "";
@@ -1292,18 +1585,22 @@
     lastRoute = location.hash;
     var app = $("#app");
     var seen = changed ? null : appearKeys(app);
+    var slides = app.querySelector(".hero-slides");
     app.innerHTML = (VIEWS[route.name] || VIEWS.inicio)(route.param);
+    var slidesSlot = app.querySelector(".hero-slides");
+    if (slides && slidesSlot) slidesSlot.replaceWith(slides);
     app.classList.toggle("is-entering", changed);
+    document.body.classList.toggle("has-hero", !!app.querySelector(".hero"));
     if (changed) animateEntrance(app);
     else markNew(app, seen);
     document.title = ROUTES[route.name].titulo + " — Lilly 360";
 
+    renderNav();
     var navKey = ROUTES[route.name].nav;
     document.querySelectorAll("[data-nav]").forEach(function (a) {
       if (a.dataset.nav === navKey) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
-    if (changed) moveIndicator(null, false);
 
     renderSheet();
     renderBackstage();
@@ -1331,6 +1628,48 @@
     }
   }
 
+  function updatePesquisa() {
+    var thread = $("#pesquisa-thread");
+    if (!thread) return;
+    thread.innerHTML = pesquisaThread();
+    var foot = $(".ask-foot");
+    if (foot) foot.hidden = !state.chat.length;
+    var hero = thread.closest(".hero--busca");
+    if (hero) {
+      hero.classList.toggle("is-conversa", state.chat.length > 0);
+      thread.tabIndex = state.chat.length ? 0 : -1;
+    }
+  }
+
+  /* No banner as respostas rolam dentro da própria área; fora dele, a página rola até a pergunta. */
+  function mostrarUltimaPergunta() {
+    var last = $("#pesquisa-thread .ask-turn:last-child");
+    if (!last) return;
+    var behavior = reducedMotion() ? "auto" : "smooth";
+    var thread = last.parentNode;
+    if (thread.classList.contains("hero-thread")) thread.scrollTo({ top: last.offsetTop - 8, behavior: behavior });
+    else last.scrollIntoView({ block: "nearest", behavior: behavior });
+  }
+
+  function pesquisar(q) {
+    q = q.trim();
+    if (!q) return;
+    var turn = { q: q, pending: true };
+    state.chat.push(turn);
+    sig("busca_realizada", { termos: q }, "Pesquisa só no acervo aprovado. Nenhuma resposta gerada por IA.");
+    updatePesquisa();
+    mostrarUltimaPergunta();
+    save();
+    updateProto();
+    setTimeout(function () {
+      turn.pending = false;
+      updatePesquisa();
+      if ($(".hero-thread")) mostrarUltimaPergunta();
+      save();
+      updateProto();
+    }, 700);
+  }
+
   /* ---------- Ações ---------- */
 
   var ACTIONS = {
@@ -1339,6 +1678,7 @@
     },
     sheet: function (el) {
       state.sheet = { type: el.dataset.sheet, material: el.dataset.material || "" };
+      if (el.dataset.sheet === "whatsapp") waFone = "";
       if (el.dataset.sheet === "linkedin") {
         var ta = $("#post-text");
         if (ta) state.postText = ta.value;
@@ -1351,6 +1691,18 @@
       state.why = el.dataset.item;
       state.backstage = true;
       sig("por_que_vejo_isto", { item: el.dataset.item }, "Transparência: o médico vê o motivo e pode ajustar as preferências.");
+    },
+    "pesquisa-sugestao": function (el) {
+      pesquisar(el.dataset.q);
+      return false;
+    },
+    "pesquisa-limpar": function () {
+      state.chat = [];
+      updatePesquisa();
+      save();
+      var input = $("#pesquisa-hero-input") || $("#pesquisa-input");
+      if (input) input.focus();
+      return false;
     },
     "busca-sugestao": function (el) {
       state.query = el.dataset.q;
@@ -1579,8 +1931,10 @@
 
   function startFlow(n) {
     var keepBackstage = state.backstage;
+    var keepHome = state.primeiroAcesso;
     state = initialState();
     state.backstage = keepBackstage;
+    state.primeiroAcesso = n ? false : keepHome;
     state.flow = n;
     state.counting = n === 1 || n === 2 || n === 4;
     state.t0 = Date.now();
@@ -1597,6 +1951,12 @@
       if (!state.backstage) state.why = null;
       renderBackstage();
       save();
+    },
+    home: function (el) {
+      state.primeiroAcesso = el.dataset.home === "primeiro";
+      window.scrollTo(0, 0);
+      if (state.primeiroAcesso && state.flow) startFlow(0);
+      else go("#/inicio");
     },
     reiniciar: function () {
       startFlow(state.flow);
@@ -1651,11 +2011,40 @@
     }
   });
 
+  function ajustarComposer(input) {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 200) + "px";
+    input.style.overflowY = input.scrollHeight > 200 ? "auto" : "hidden";
+    var send = input.form && input.form.querySelector(".ask-send");
+    if (send) send.disabled = !input.value.trim();
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.target.matches(".ask-form textarea") && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      e.target.form.requestSubmit();
+    } else if (e.target.id === "wa-fone" && e.key === "Enter") {
+      e.preventDefault();
+      var enviar = $('[data-action="whatsapp-enviar"]');
+      if (enviar && !enviar.disabled) enviar.click();
+    }
+  });
+
   document.addEventListener("input", function (e) {
-    if (e.target.id === "busca-input") {
+    if (e.target.matches(".ask-form textarea")) {
+      ajustarComposer(e.target);
+    } else if (e.target.id === "busca-input") {
       state.query = e.target.value;
       $("#busca-resultados").innerHTML = searchResults();
       save();
+    } else if (e.target.id === "wa-fone") {
+      waFone = e.target.value.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "").slice(0, 11);
+      e.target.value = foneFormatado(waFone);
+      var ok = foneValido(waFone);
+      var botao = $('[data-action="whatsapp-enviar"]');
+      if (botao) botao.disabled = !ok;
+      var head = $("#wa-head");
+      if (head) head.textContent = "WhatsApp · " + (ok ? "+55 " + foneFormatado(waFone) : "contato do paciente");
     } else if (e.target.id === "post-text") {
       state.postText = e.target.value;
       save();
@@ -1663,6 +2052,16 @@
   });
 
   document.addEventListener("submit", function (e) {
+    if (e.target.dataset.form === "pesquisa") {
+      e.preventDefault();
+      var input = e.target.querySelector("textarea");
+      if (!input.value.trim()) return;
+      if (!e.submitter && state.counting && state.goal === null) state.touches++;
+      pesquisar(input.value);
+      input.value = "";
+      ajustarComposer(input);
+      return;
+    }
     if (e.target.dataset.form === "busca") {
       e.preventDefault();
       var q = state.query.trim();
@@ -1686,13 +2085,11 @@
       render();
       return;
     }
-    var menu = $(".menu");
-    if (menu && menu.open) menu.open = false;
+    if (navOpen) closeNav(true);
   });
 
   window.addEventListener("hashchange", function () {
-    var menu = $(".menu");
-    if (menu) menu.open = false;
+    closeNav(false);
     var r = parseRoute().name;
     if (r === "radar" && state.day === "ter" && state.eventAttended && !state.radarSeen) {
       state.radarSeen = true;
@@ -1706,27 +2103,138 @@
     render();
   });
 
-  var nav = $(".nav-inline");
-  nav.addEventListener("mouseover", function (event) {
-    var link = event.target.closest(".nav-link");
-    if (link) moveIndicator(link, false);
+  var navPill = $("#nav-pill");
+  var navToggle = $(".nav-toggle");
+  var navOpen = false;
+  var navLeaveTimer = null;
+  var navEndTimer = null;
+  var navDesktop = window.matchMedia("(min-width: 1025px)");
+  var navHover = window.matchMedia("(hover: hover) and (pointer: fine)");
+
+  function setNavTab(id) {
+    navPill.querySelectorAll(".nav-tabs li").forEach(function (li) {
+      li.classList.toggle("is-active", li.dataset.tab === id);
+    });
+    navPill.querySelectorAll(".nav-sub").forEach(function (s) {
+      s.classList.toggle("is-active", s.dataset.subPanel === id);
+    });
+  }
+
+  function navDefaultTab() {
+    var name = parseRoute().name;
+    if (name === "parceiros" || name === "equipe") return "mais";
+    var key = ROUTES[name].nav;
+    return $("#nav-sub-" + key) ? key : "inicio";
+  }
+
+  function setNavSub(open) {
+    navPill.classList.toggle("is-sub", open);
+    var main = navPill.querySelector(".nav-main");
+    if (main) main.inert = open;
+  }
+
+  function openNav(focusFirst) {
+    clearTimeout(navLeaveTimer);
+    clearTimeout(navEndTimer);
+    if (navOpen) return;
+    navOpen = true;
+    if (!navPill.classList.contains("is-open")) {
+      var r = navPill.getBoundingClientRect();
+      navPill.style.setProperty("--pill-x", r.left + "px");
+      navPill.style.setProperty("--pill-y", r.top + "px");
+      navPill.style.setProperty("--pill-w", r.width + "px");
+      navPill.style.setProperty("--pill-h", r.height + "px");
+      setNavTab(navDefaultTab());
+      setNavSub(false);
+      navPill.classList.add("is-open", "is-clipped");
+      void navPill.offsetWidth;
+    }
+    navPill.classList.remove("is-clipped");
+    document.documentElement.classList.toggle("nav-locked", !navDesktop.matches);
+    navToggle.setAttribute("aria-expanded", "true");
+    navToggle.setAttribute("aria-label", "Fechar navegação");
+    if (focusFirst) {
+      var first = navPill.querySelector(".nav-tab");
+      if (first) first.focus();
+    }
+  }
+
+  function closeNav(focusToggle) {
+    clearTimeout(navLeaveTimer);
+    if (!navOpen) return;
+    navOpen = false;
+    navPill.classList.add("is-clipped");
+    document.documentElement.classList.remove("nav-locked");
+    navToggle.setAttribute("aria-expanded", "false");
+    navToggle.setAttribute("aria-label", "Abrir navegação");
+    navEndTimer = setTimeout(function () {
+      navPill.classList.remove("is-open", "is-clipped");
+      setNavSub(false);
+    }, reducedMotion() ? 0 : 280);
+    if (focusToggle) navToggle.focus();
+  }
+
+  function hoverNav() {
+    return navDesktop.matches && navHover.matches;
+  }
+
+  navToggle.addEventListener("click", function (e) {
+    if (navOpen) closeNav(false);
+    else openNav(e.detail === 0);
   });
-  nav.addEventListener("focusin", function (event) {
-    var link = event.target.closest(".nav-link");
-    if (link) moveIndicator(link, false);
+  navPill.addEventListener("mouseenter", function () {
+    if (hoverNav()) openNav(false);
   });
-  nav.addEventListener("mouseleave", function () {
-    moveIndicator(null, false);
+  navPill.addEventListener("mouseleave", function () {
+    if (!hoverNav()) return;
+    navLeaveTimer = setTimeout(function () {
+      if (!navPill.contains(document.activeElement) || document.activeElement === navToggle) closeNav(false);
+    }, 120);
   });
-  nav.addEventListener("focusout", function (event) {
-    if (!nav.contains(event.relatedTarget)) moveIndicator(null, false);
+  navPill.addEventListener("mouseover", function (e) {
+    var tab = e.target.closest(".nav-tabs li");
+    if (tab && navDesktop.matches) setNavTab(tab.dataset.tab);
   });
-  window.addEventListener("resize", function () {
-    moveIndicator(null, true);
+  navPill.addEventListener("focusin", function (e) {
+    var tab = e.target.closest(".nav-tabs li");
+    if (tab && navDesktop.matches) setNavTab(tab.dataset.tab);
+  });
+  navPill.addEventListener("focusout", function (e) {
+    if (navOpen && e.relatedTarget && !navPill.contains(e.relatedTarget)) closeNav(false);
+  });
+  navPill.addEventListener("click", function (e) {
+    var sub = e.target.closest("[data-sub]");
+    if (sub && !navDesktop.matches) {
+      e.preventDefault();
+      setNavTab(sub.dataset.sub);
+      setNavSub(true);
+      var back = $("#nav-sub-" + sub.dataset.sub + " .nav-back");
+      if (back) back.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target.closest(".nav-back")) {
+      var id = navPill.querySelector(".nav-sub.is-active").dataset.subPanel;
+      setNavSub(false);
+      var opener = navPill.querySelector('.nav-tabs [data-sub="' + id + '"]');
+      if (opener) opener.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target.closest("#nav-panel a")) closeNav(false);
+  });
+  document.addEventListener("click", function (e) {
+    if (navOpen && !navPill.contains(e.target)) closeNav(false);
+  });
+  navDesktop.addEventListener("change", function () {
+    if (!navOpen) return;
+    navOpen = false;
+    clearTimeout(navEndTimer);
+    navPill.classList.remove("is-open", "is-clipped");
+    setNavSub(false);
+    document.documentElement.classList.remove("nav-locked");
+    navToggle.setAttribute("aria-expanded", "false");
+    navToggle.setAttribute("aria-label", "Abrir navegação");
   });
 
   if (!location.hash) history.replaceState(null, "", "#/inicio");
   render();
-  moveIndicator(null, true);
-  if (document.fonts) document.fonts.ready.then(function () { moveIndicator(null, true); });
 })();
