@@ -32,8 +32,13 @@
     parceiros: { titulo: "Parceiros", release: "Evolução na F4", dado: "Cliques em conteúdo patrocinado", nav: "" },
     equipe: { titulo: "Falar com a equipe", release: "R3", dado: "Pedidos de contato", nav: "" },
     chatgpt: { titulo: "ChatGPT", release: "Fora da plataforma", dado: "Nenhum: a pesquisa acontece fora do Lilly 360", nav: "", publico: true },
-    artigo: { titulo: "Artigo aberto", release: "A definir", dado: "Visita anônima: origem do link e leitura, sem dado pessoal", nav: "", publico: true }
+    artigo: { titulo: "Artigo aberto", release: "A definir", dado: "Visita anônima: origem do link e leitura, sem dado pessoal", nav: "", publico: true },
+    entrar: { titulo: "Entrar", release: "A definir", dado: "Nenhum até o login", nav: "", publico: true }
   };
+
+  function loginInicial(destino) {
+    return { step: "crm", crm: "123456", uf: "SP", erro: false, destino: destino };
+  }
 
   function initialState() {
     return {
@@ -74,6 +79,7 @@
       primeiroAcesso: false,
       externo: false,
       deslogado: false,
+      login: loginInicial("#/inicio"),
       gpt: 0,
       why: null,
       audio: false,
@@ -88,6 +94,8 @@
   var sheetTimer = null;
   /* Telefone do paciente: só em memória, para um envio. Nunca entra no state salvo. */
   var waFone = "";
+  /* Código de acesso enviado por e-mail: só em memória, vale para um login. */
+  var loginCodigo = "";
   var backstageTimer = null;
   var revealObserver = null;
 
@@ -99,6 +107,7 @@
         if (!FLOWS[saved.flow] || FLOWS[saved.flow].oculto) saved.flow = 0;
         saved.chat = saved.chat.map(function (t) { return { q: t.q }; });
         if (saved.gpt === 1) saved.gpt = 2;
+        if (saved.login.step === "codigo") saved.login = loginInicial(saved.login.destino);
         return saved;
       }
     } catch (e) {}
@@ -578,7 +587,7 @@
 
   function heroSlides() {
     return '<div class="hero-slides" aria-hidden="true">' +
-      '<img class="hero-media" src="' + HERO_IMG + '" alt="" fetchpriority="high" /></div>';
+      '<img class="hero-media hero-media--familia" src="assets/img/hero-familia.jpg?v=3" alt="" fetchpriority="high" /></div>';
   }
 
   function homeFoot() {
@@ -891,6 +900,39 @@
 
       '<p class="legal">Conteúdo ilustrativo, sujeito a MLR. Material educacional destinado a profissionais de saúde. Nesta versão aberta, nada sobre você é usado para personalizar a página.</p>';
     return page({ narrow: true, back: false, className: "artigo", eyebrow: "Cardiologia · Nefrologia", title: "Creatinina subiu depois do IECA: quando <em>manter a dose</em>" }, body);
+  };
+
+  /* ---------- Login sem senha: CRM e código por e-mail ---------- */
+
+  var LOGIN_EMAIL = "pa•••••@gmail.com";
+  var UFS = ["SP", "RJ", "MG", "RS", "PR", "BA"];
+
+  function loginHtml() {
+    var l = state.login;
+    if (l.step === "codigo") {
+      return '<form class="login" data-form="login-codigo">' +
+        '<p class="panel-body">Enviamos um código de 6 dígitos para <b>' + LOGIN_EMAIL + "</b>. Ele vale por 10 minutos.</p>" +
+        '<div class="field"><label for="login-codigo">Código de acesso</label>' +
+        '<input class="login-code" id="login-codigo" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" data-autofocus' + (l.erro ? ' aria-invalid="true" aria-describedby="login-erro"' : "") + " /></div>" +
+        (l.erro ? '<p class="login-erro" id="login-erro" role="alert">' + (l.erro === "incompleto" ? "Digite os 6 dígitos do código." : "Código incorreto. Confira o e-mail e tente de novo.") + "</p>" : "") +
+        '<button class="button button-primary login-submit" type="submit">Entrar</button>' +
+        '<div class="login-links"><button class="text-button" type="button" data-action="login-reenviar">Reenviar código</button><button class="text-button" type="button" data-action="login-trocar">Trocar CRM</button></div>' +
+        '<p class="fine">Entrando como CRM ' + esc(l.crm) + "-" + l.uf + ".</p></form>";
+    }
+    return '<form class="login" data-form="login-crm">' +
+      '<p class="panel-body">Informe seu CRM. Enviamos um código de acesso para o e-mail do seu cadastro.</p>' +
+      '<div class="login-row"><div class="field"><label for="login-crm">CRM</label><input id="login-crm" type="text" inputmode="numeric" autocomplete="off" value="' + esc(l.crm) + '" data-autofocus /></div>' +
+      '<div class="field"><label for="login-uf">UF</label><select id="login-uf">' + UFS.map(function (uf) { return "<option" + (uf === l.uf ? " selected" : "") + ">" + uf + "</option>"; }).join("") + "</select></div></div>" +
+      '<button class="button button-primary login-submit" type="submit">Enviar código</button>' +
+      '<p class="fine">Sem senha: a cada acesso, um código novo chega no seu e-mail.</p></form>';
+  }
+
+  VIEWS.entrar = function () {
+    return '<section class="page entrar"><div class="container"><div class="entrar-inner">' +
+      '<div class="entrar-head"><p class="eyebrow">Sessão encerrada</p>' +
+      '<h1 class="display page-title" tabindex="-1" data-focus>Você saiu do <em>Lilly 360</em>.</h1>' +
+      '<p class="page-intro">Para voltar, entre com seu CRM. O acesso é por um código enviado ao seu e-mail.</p></div>' +
+      '<div class="panel entrar-card"><h2 class="panel-title">Entrar</h2>' + loginHtml() + "</div></div></div></section>";
   };
 
   VIEWS.tema = function () {
@@ -1231,7 +1273,10 @@
       '<section class="panel kit"><header class="kit-head"><h2 class="display kit-title" id="preferencias">Preferências e <em>consentimentos</em></h2></header><ul class="kit-list">' +
       PREFS.map(function (pr) {
         return '<li class="kit-row is-static">' + kitRow(pr[0], pr[1], pr[2], '<span class="pref-on">Sim</span>') + "</li>";
-      }).join("") + "</ul></section></div>");
+      }).join("") + "</ul></section></div>" +
+      '<section class="panel sessao" aria-labelledby="sessao-titulo"><div class="sessao-text"><h2 class="display kit-title" id="sessao-titulo">Sessão</h2>' +
+      '<p class="panel-body">Conectado como Dr. Paulo Ferreira · CRM 123456-SP. O acesso é por código enviado ao seu e-mail, sem senha.</p></div>' +
+      '<button class="button button-line sessao-sair" type="button" data-action="sair">Sair do Lilly 360</button></section>');
   };
 
   VIEWS.aprendizado = function () {
@@ -1491,14 +1536,8 @@
           '<div class="stack-actions"><button class="button button-primary" type="button" data-action="whatsapp-enviar"' + (foneValido(waFone) ? "" : " disabled") + ">" + icon("send", 18, 2) + "Enviar pelo WhatsApp</button>" +
           '<div class="row-actions"><button class="text-button" type="button" data-action="material-alt" data-v="Impressão">Imprimir</button><button class="text-button" type="button" data-action="material-alt" data-v="QR">Mostrar QR</button></div></div>';
     } else if (s.type === "login") {
-      title = "Entrar no Lilly 360";
-      body = '<form class="login" data-form="login">' +
-        '<p class="panel-body">Use seu CRM. Depois de entrar, você volta a este tema com triagem, ferramentas e material para o paciente.</p>' +
-        '<div class="login-row"><div class="field"><label for="login-crm">CRM</label><input id="login-crm" type="text" inputmode="numeric" autocomplete="off" value="123456" data-autofocus /></div>' +
-        '<div class="field"><label for="login-uf">UF</label><select id="login-uf">' + ["SP", "RJ", "MG", "RS", "PR", "BA"].map(function (uf) { return "<option>" + uf + "</option>"; }).join("") + "</select></div></div>" +
-        '<div class="field"><label for="login-senha">Senha</label><input id="login-senha" type="password" autocomplete="off" value="lilly360demo" /></div>' +
-        '<button class="button button-primary login-submit" type="submit">Entrar</button>' +
-        '<p class="fine">Protótipo: os campos já vêm preenchidos e nada é enviado.</p></form>';
+      title = state.login.step === "codigo" ? "Confira seu e-mail" : "Entrar no Lilly 360";
+      body = loginHtml();
     } else if (s.type === "linkedin") {
       var text = state.postText === null ? defaultPost() : state.postText;
       title = s.done ? "Publicado" : "Prévia do LinkedIn";
@@ -1585,11 +1624,13 @@
     var f = state.flow;
     var ter = state.day === "ter";
     var toTer = { label: "Avançar para terça", proto: "dia", dia: "ter" };
+    if (state.deslogado && state.login.step === "codigo") return { text: 'O código chegou por e-mail. Digite os 6 dígitos ou toque em "Usar código" na notificação.' };
+    if (r === "entrar") return { text: "Sessão encerrada. Para voltar, o médico informa o CRM e recebe um código por e-mail, sem senha." };
     if (state.externo) {
       if (r === "chatgpt" && state.gpt === 0) return { text: "Via ChatGPT: o médico tira a dúvida fora da plataforma. Envie a pergunta." };
       if (r === "chatgpt" && state.gpt === 1) return { text: "O ChatGPT pesquisa na web." };
       if (r === "chatgpt") return { text: 'A resposta cita o Lilly 360. Toque em "Lilly 360" para abrir o artigo.' };
-      if (state.deslogado) return { text: "Área deslogada: o artigo é aberto e não usa dado do médico. Triagem, ferramentas e material pedem login com CRM." };
+      if (state.deslogado) return { text: "Área deslogada: o artigo é aberto e não usa dado do médico. Triagem, ferramentas e material pedem login com CRM e código por e-mail." };
       if (r === "tema") return { text: "Logado: o médico continua no mesmo tema, agora com triagem, ferramentas e envio ao paciente." };
       return { text: "Logado pelo artigo: a home é a de primeiro acesso, porque a plataforma ainda não conhece o uso dele." };
     }
@@ -1734,8 +1775,17 @@
   function render() {
     var route = parseRoute();
     if (state.deslogado && !ROUTES[route.name].publico) {
-      state.sheet = { type: "login" };
-      location.replace("#/artigo");
+      if (state.externo) {
+        state.login = loginInicial("#/tema/ajuste-de-dose");
+        state.sheet = { type: "login" };
+        location.replace("#/artigo");
+      } else {
+        location.replace("#/entrar");
+      }
+      return;
+    }
+    if (!state.deslogado && route.name === "entrar") {
+      location.replace("#/inicio");
       return;
     }
     document.body.classList.toggle("is-externo", route.name === "chatgpt");
@@ -1910,7 +1960,35 @@
       return false;
     },
     "login-abrir": function () {
+      if (parseRoute().name === "entrar") {
+        var campo = $("#login-crm") || $("#login-codigo");
+        if (campo) campo.focus();
+        return false;
+      }
+      state.login = loginInicial(parseRoute().name === "artigo" ? "#/tema/ajuste-de-dose" : "#/inicio");
       state.sheet = { type: "login" };
+    },
+    "login-reenviar": function () {
+      enviarCodigo();
+      toast("Enviamos um código novo");
+    },
+    "login-trocar": function () {
+      fecharEmail();
+      state.login.step = "crm";
+      state.login.erro = false;
+      setTimeout(function () {
+        var campoCrm = $("#login-crm");
+        if (campoCrm) campoCrm.focus();
+      });
+    },
+    sair: function () {
+      fecharEmail();
+      sig("logout", null, "Sessão encerrada. Até o próximo login, nada entra no perfil.");
+      state.deslogado = true;
+      state.sheet = null;
+      state.login = loginInicial("#/inicio");
+      go("#/entrar");
+      return false;
     },
     "whatsapp-enviar": function () {
       var flowSend = state.flow === 1 && parseRoute().name === "tema";
@@ -2133,12 +2211,38 @@
     }, reducedMotion() ? 400 : 1800);
   }
 
+  function enviarCodigo() {
+    loginCodigo = String(Math.floor(100000 + Math.random() * 900000));
+    mostrarEmail(loginCodigo);
+  }
+
+  function mostrarEmail(codigo) {
+    var root = $("#mail-root");
+    root.innerHTML = '<div class="mail-note" role="status" aria-label="Novo e-mail do Lilly 360">' +
+      '<span class="mail-note-ico" aria-hidden="true">' + icon("mail", 20, 1.75) + "</span>" +
+      '<div class="mail-note-body"><p class="mail-note-head"><b>Lilly 360</b><span>agora</span></p>' +
+      '<p class="mail-note-title">Seu código de acesso</p>' +
+      '<p class="mail-note-code">' + codigo.slice(0, 3) + " " + codigo.slice(3) + "</p>" +
+      '<p class="mail-note-text">Vale por 10 minutos. Se não foi você, ignore este e-mail.</p>' +
+      '<button class="mail-note-use" type="button" data-proto="usar-codigo">Usar código</button></div>' +
+      '<button class="mail-note-close" type="button" data-proto="fechar-email" aria-label="Fechar e-mail">' + icon("close", 16, 2) + "</button></div>";
+  }
+
+  function fecharEmail() {
+    var root = $("#mail-root");
+    if (root) root.innerHTML = "";
+  }
+
   function entrar() {
+    var destino = state.login.destino;
+    fecharEmail();
+    loginCodigo = "";
     state.deslogado = false;
-    state.primeiroAcesso = true;
+    if (state.externo) state.primeiroAcesso = true;
     state.sheet = null;
-    sig("login", { origem: "artigo_aberto", canal: "chatgpt" }, "A partir do login, o uso passa a entrar no perfil.");
-    go("#/tema/ajuste-de-dose");
+    state.login = loginInicial("#/inicio");
+    sig("login", { metodo: "codigo_email", origem: state.externo ? "artigo_aberto" : "entrar" }, "A partir do login, o uso passa a entrar no perfil.");
+    go(destino);
   }
 
   var PROTO = {
@@ -2163,7 +2267,18 @@
       if (state.primeiroAcesso && state.flow) startFlow(0);
       else go("#/inicio");
     },
+    "usar-codigo": function () {
+      var campo = $("#login-codigo");
+      if (!campo) return;
+      campo.value = loginCodigo;
+      campo.dispatchEvent(new Event("input", { bubbles: true }));
+      campo.focus();
+    },
+    "fechar-email": function () {
+      fecharEmail();
+    },
     reiniciar: function () {
+      fecharEmail();
       if (state.externo) startExterno();
       else startFlow(state.flow);
     },
@@ -2233,6 +2348,9 @@
       e.preventDefault();
       var enviar = $('[data-action="whatsapp-enviar"]');
       if (enviar && !enviar.disabled) enviar.click();
+    } else if (e.target.matches("#login-codigo, #login-crm") && e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      e.target.form.requestSubmit();
     }
   });
 
@@ -2243,6 +2361,16 @@
       state.query = e.target.value;
       $("#busca-resultados").innerHTML = searchResults();
       save();
+    } else if (e.target.id === "login-codigo") {
+      var digitos = e.target.value.replace(/\D/g, "").slice(0, 6);
+      if (e.target.value !== digitos) e.target.value = digitos;
+      if (state.login.erro) {
+        state.login.erro = false;
+        e.target.removeAttribute("aria-invalid");
+        e.target.removeAttribute("aria-describedby");
+        var erroMsg = $("#login-erro");
+        if (erroMsg) erroMsg.remove();
+      }
     } else if (e.target.id === "wa-fone") {
       waFone = e.target.value.replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "").slice(0, 11);
       e.target.value = foneFormatado(waFone);
@@ -2264,9 +2392,34 @@
       else toast("No protótipo, a conversa tem uma pergunta só");
       return;
     }
-    if (e.target.dataset.form === "login") {
+    if (e.target.dataset.form === "login-crm") {
       e.preventDefault();
-      entrar();
+      var crm = $("#login-crm").value.replace(/\D/g, "");
+      if (!crm) {
+        $("#login-crm").focus();
+        return;
+      }
+      state.login.crm = crm;
+      state.login.uf = $("#login-uf").value;
+      state.login.step = "codigo";
+      state.login.erro = false;
+      enviarCodigo();
+      render();
+      var campoCodigo = $("#login-codigo");
+      if (campoCodigo) campoCodigo.focus();
+      return;
+    }
+    if (e.target.dataset.form === "login-codigo") {
+      e.preventDefault();
+      var codigo = $("#login-codigo").value.replace(/\D/g, "");
+      if (codigo === loginCodigo) {
+        entrar();
+      } else {
+        state.login.erro = codigo.length === 6 ? true : "incompleto";
+        render();
+        var campoErro = $("#login-codigo");
+        if (campoErro) campoErro.focus();
+      }
       return;
     }
     if (e.target.dataset.form === "pesquisa") {
