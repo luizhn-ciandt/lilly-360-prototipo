@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Instrument+Serif:ital@0;1&display=swap" />
-    <link rel="stylesheet" href="styles.css?v=95" />
+    <link rel="stylesheet" href="styles.css?v=97" />
   </head>
   <body>
     <svg width="0" height="0" style="position: absolute" aria-hidden="true">
@@ -86,9 +86,28 @@
       <div class="backstage-body" id="backstage-body"></div>
     </aside>
 
-    <div class="protobar" role="region" aria-label="Controles do protótipo">
+    <button class="proto-fab" id="proto-fab" type="button" data-proto="painel" aria-expanded="false" aria-controls="protobar">
+      <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-sliders" /></svg>
+      <span class="visually-hidden">Protótipo</span>
+    </button>
+
+    <div class="protobar" id="protobar" role="region" aria-label="Controles do protótipo" hidden>
       <div class="protobar-row">
-        <span class="proto-label">Protótipo</span>
+        <div class="proto-head">
+          <span class="proto-label">Protótipo</span>
+          <button class="proto-close" type="button" data-proto="painel" aria-label="Fechar controles do protótipo">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <p class="proto-hint" id="proto-hint" aria-live="polite"></p>
+        <span class="proto-stat" id="proto-touches"></span>
+        <p class="proto-group-label">Cenário</p>
+        <div class="proto-seg" role="group" aria-label="Home simulada">
+          <button type="button" data-proto="home" data-home="recorrente" aria-pressed="true">Recorrente</button>
+          <button type="button" data-proto="home" data-home="primeiro" aria-pressed="false">Primeiro acesso</button>
+          <button type="button" data-proto="home" data-home="externo" aria-pressed="false">Via ChatGPT</button>
+        </div>
+        <p class="proto-group-label">Fluxo guiado</p>
         <label class="proto-field">
           <span class="visually-hidden">Fluxo</span>
           <select id="proto-flow">
@@ -100,16 +119,10 @@
             <option value="5">3. Do estudo ao reconhecimento</option>
           </select>
         </label>
+        <p class="proto-group-label">Dia simulado</p>
         <div class="proto-seg" role="group" aria-label="Dia simulado">
           <button type="button" data-proto="dia" data-dia="seg" aria-pressed="true">Segunda</button>
           <button type="button" data-proto="dia" data-dia="ter" aria-pressed="false">Terça</button>
-        </div>
-        <p class="proto-hint" id="proto-hint" aria-live="polite"></p>
-        <span class="proto-stat" id="proto-touches"></span>
-        <div class="proto-seg" role="group" aria-label="Home simulada">
-          <button type="button" data-proto="home" data-home="recorrente" aria-pressed="true">Recorrente</button>
-          <button type="button" data-proto="home" data-home="primeiro" aria-pressed="false">Primeiro acesso</button>
-          <button type="button" data-proto="home" data-home="externo" aria-pressed="false">Via ChatGPT</button>
         </div>
         <button class="proto-button" type="button" data-proto="reiniciar">
           <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-reset" /></svg>
@@ -121,6 +134,6 @@
     <div class="toast-root" id="toast-root" role="status" aria-live="polite"></div>
     <div class="mail-root" id="mail-root"></div>
 
-    <script src="app.js?v=85"></script>
+    <script src="app.js?v=87"></script>
   </body>
 </html>

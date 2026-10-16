@@ -1600,7 +1600,7 @@ svg {
 :root {
   --color-success: #1e6b45;
   --color-success-bg: #e8f3ec;
-  --protobar-h: 64px;
+  --protobar-h: 0px;
   --backstage-w: 380px;
   --duracao-tela: 220ms;
   --duracao-folha: 240ms;
@@ -4825,25 +4825,92 @@ body.has-backstage {
 
 /* Barra do protótipo */
 
+.proto-fab {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 51;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #ffd84d;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  color: #191919;
+  font-size: 14px;
+  font-weight: 800;
+  transition: transform var(--duracao-rapida) var(--ease-out);
+}
+
+.proto-fab:active {
+  transform: scale(0.96);
+}
+
+.proto-fab[aria-expanded="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .protobar {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 20px;
+  bottom: 20px;
   z-index: 50;
-  min-height: var(--protobar-h);
+  width: min(380px, calc(100vw - 40px));
+  max-height: calc(100svh - 40px);
+  overflow-y: auto;
+  border-radius: 24px;
   background: #2b2b2b;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
   color: #ffffff;
   font-size: 14px;
+  transform-origin: 0 100%;
+  animation: proto-abre 200ms var(--ease-out) both;
+}
+
+.protobar[hidden] {
+  display: none;
+}
+
+@keyframes proto-abre {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
 }
 
 .protobar-row {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 16px 16px 18px;
+}
+
+.proto-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  min-height: var(--protobar-h);
-  padding: 8px 16px;
+  justify-content: space-between;
+  justify-self: stretch;
+}
+
+.proto-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #3d3d3d;
+  color: #ffffff;
+}
+
+.proto-group-label {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .proto-label {
@@ -4856,8 +4923,13 @@ body.has-backstage {
   text-transform: uppercase;
 }
 
+.proto-field {
+  justify-self: stretch;
+}
+
 .proto-field select {
   appearance: none;
+  width: 100%;
   min-height: 40px;
   padding: 0 40px 0 16px;
   border: 0;
@@ -4871,8 +4943,9 @@ body.has-backstage {
 
 .proto-seg {
   display: inline-flex;
+  flex-wrap: wrap;
   padding: 3px;
-  border-radius: var(--radius-pill);
+  border-radius: 20px;
   background: #3d3d3d;
 }
 
@@ -4892,12 +4965,18 @@ body.has-backstage {
 
 .proto-hint {
   display: flex;
-  flex: 1;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
-  min-width: 260px;
-  line-height: 1.35;
+  gap: 8px 12px;
+  justify-self: stretch;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #3d3d3d;
+  line-height: 1.4;
+}
+
+.proto-hint:empty {
+  display: none;
 }
 
 .proto-cta {
@@ -4921,6 +5000,10 @@ body.has-backstage {
   white-space: nowrap;
 }
 
+.proto-stat:empty {
+  display: none;
+}
+
 .proto-stat.is-ok {
   background: #2f6b4a;
 }
@@ -4938,6 +5021,7 @@ body.has-backstage {
   align-items: center;
   gap: 6px;
   min-height: 40px;
+  margin-top: 6px;
   padding: 0 14px;
   border-radius: var(--radius-pill);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
@@ -4960,7 +5044,7 @@ body.has-backstage {
 .toast-root {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--protobar-h) + 20px);
+  bottom: 84px;
   z-index: 60;
   display: grid;
   gap: 8px;
@@ -5069,7 +5153,6 @@ body.has-backstage {
 
 @media (max-width: 720px) {
   :root {
-    --protobar-h: 132px;
     --backstage-w: 100vw;
   }
 
@@ -5094,15 +5177,6 @@ body.has-backstage {
   .unlocked,
   .next-trail {
     padding: 24px;
-  }
-
-  .proto-hint {
-    order: 10;
-    flex-basis: 100%;
-  }
-
-  .proto-button {
-    padding: 0 10px;
   }
 
   .toast {
@@ -6127,6 +6201,16 @@ body.is-deslogado .header-entrar {
 
 @media (prefers-reduced-motion: reduce) {
   body.is-deslogado .header-entrar {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .protobar {
+    animation: none;
+  }
+
+  .proto-fab {
     transition: none;
   }
 }

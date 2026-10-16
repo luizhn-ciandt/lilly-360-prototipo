@@ -2245,7 +2245,24 @@
     go(destino);
   }
 
+  function painelProto(abrir) {
+    var painel = $("#protobar");
+    var fab = $("#proto-fab");
+    painel.hidden = !abrir;
+    fab.setAttribute("aria-expanded", String(abrir));
+    document.body.classList.toggle("is-proto-aberto", abrir);
+    if (abrir) {
+      var foco = painel.querySelector("[aria-pressed='true'], select, button");
+      if (foco) foco.focus();
+    } else if (painel.contains(document.activeElement)) {
+      fab.focus();
+    }
+  }
+
   var PROTO = {
+    painel: function () {
+      painelProto($("#protobar").hidden);
+    },
     dia: function (el) {
       setDay(el.dataset.dia);
     },
@@ -2296,6 +2313,8 @@
   };
 
   document.addEventListener("click", function (e) {
+    if (!$("#protobar").hidden && !e.target.closest("#protobar, #proto-fab, .mail-note")) painelProto(false);
+
     var proto = e.target.closest("[data-proto]");
     if (proto) {
       PROTO[proto.dataset.proto](proto);
@@ -2450,6 +2469,10 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
+    if (!$("#protobar").hidden) {
+      painelProto(false);
+      return;
+    }
     if (state.sheet) {
       state.sheet = null;
       render();
